@@ -1,7 +1,7 @@
 """Dual-Stream Architecture (DSA) software-only reference implementation.
 
-This package is intentionally modular: low-level codecs (frames) can be imported without requiring
-heavy ML dependencies. The generation wrapper requires torch + transformers.
+This package is intentionally modular: low-level codecs (frames) can be imported without
+requiring heavy ML dependencies. The generation wrapper targets local Ollama models.
 """
 
 from .frame import MonologueFrameV1, AttnSummary, ConceptScore, TopKToken, encode_frame, decode_frame
@@ -20,11 +20,6 @@ __all__ = [
     "CoherenceFinding",
 ]
 
-# Optional: generation wrapper (torch/transformers)
-try:
-    from .generator import DualStreamGenerator, GenerationConfig  # noqa: F401
+from .generator import DualStreamGenerator, GenerationConfig  # noqa: F401
 
-    __all__ += ["DualStreamGenerator", "GenerationConfig"]
-except Exception:
-    # Allow importing codecs/render/audit without ML stack installed.
-    pass
+__all__ += ["DualStreamGenerator", "GenerationConfig"]

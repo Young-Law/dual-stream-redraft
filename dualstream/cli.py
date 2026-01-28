@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .generator import DualStreamGenerator, GenerationConfig
@@ -30,18 +31,29 @@ def cmd_generate(args: argparse.Namespace) -> int:
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
-    gen = DualStreamGenerator(cfg.model, device=cfg.device)
+    if args.include_attn or args.include_probes or args.probe_pack:
+        print(
+            "Warning: Ollama backend does not support attention summaries or probe packs; "
+            "those options will be ignored.",
+            file=sys.stderr,
+        )
+
+    gen = DualStreamGenerator(cfg.model, host=args.ollama_host)
     result = gen.generate(args.prompt, cfg)
 
-    frames = result["frames"]
-    monologue_text = render_monologue_text(frames, tokenizer_decode=gen.tokenizer.decode)
+    token_lookup = result["token_lookup"]
+
+    def _decode_token(tid: int) -> str:
+        return token_lookup.get(tid, str(tid))
+
+    monologue_text = render_monologue_text(result["frames"], tokenizer_decode=_decode_token)
 
     (outdir / "answer.txt").write_text(result["answer"], encoding="utf-8")
     (outdir / "monologue.txt").write_text(monologue_text, encoding="utf-8")
 
     # JSONL evidence frames
     with (outdir / "monologue.jsonl").open("w", encoding="utf-8") as f:
-        for fr in frames:
+        for fr in result["frames"]:
             f.write(json.dumps(fr.to_dict(), ensure_ascii=False) + "\n")
 
     # Raw binary stream (concatenated frames) for low-level consumers
@@ -52,6 +64,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     meta = {
         "prompt_nonce": result["prompt_nonce"],
         "model": result["model"],
+        "backend": "ollama",
         "running_hash": result["running_hash"],
         "config": {
             "model": cfg.model,
@@ -63,12 +76,13 @@ def cmd_generate(args: argparse.Namespace) -> int:
             "include_attn": cfg.include_attn,
             "include_probes": cfg.include_probes,
             "probe_pack_path": cfg.probe_pack_path,
+            "backend": "ollama",
         },
     }
     (outdir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     # Optional coherence audit
-    findings = coherence_audit(result["answer"], frames, decode_token=lambda tid: gen.tokenizer.decode([tid]))
+    findings = coherence_audit(result["answer"], result["frames"], decode_token=_decode_token)
     (outdir / "audit.json").write_text(
         json.dumps([f.__dict__ for f in findings], indent=2),
         encoding="utf-8",
@@ -82,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     g = sub.add_parser("generate", help="Generate answer + monologue evidence for a prompt")
-    g.add_argument("--model", default="gpt2", help="HF model name or path")
+    g.add_argument("--model", default="gemma3:1b", help="Ollama model name (local)")
     g.add_argument("--prompt", required=True, help="User prompt")
     g.add_argument("--outdir", default=".", help="Output directory")
     g.add_argument("--max-new-tokens", type=int, default=128)
@@ -100,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-crc32", action="store_true", help="Do not append crc32 to frames")
     g.add_argument("--no-running-hash", action="store_true", help="Disable running hash accumulation")
     g.add_argument("--device", default=None, help="Override device, e.g. cpu/cuda")
+    g.add_argument(
+        "--ollama-host",
+        default=None,
+        help="Ollama host URL (default: env OLLAMA_HOST or http://localhost:11434)",
+    )
 
     g.set_defaults(func=cmd_generate)
     return p

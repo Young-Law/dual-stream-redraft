@@ -4,8 +4,6 @@ version = "0.1.0"
 description = "Dual-Stream Architecture software-only reference implementation"
 requires-python = ">=3.9"
 dependencies = [
-  "torch>=2.1",
-  "transformers>=4.41",
   "numpy>=1.24",
   "tqdm>=4.66",
 ]

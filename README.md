@@ -6,7 +6,7 @@ This folder provides **working code** that matches the *v2.2 redraft* of the whi
 - A minimal **Coherence Audit** plus a **promptfoo** harness that consumes both streams.
 
 > Notes
-> - This is a **software-only** path intended for local / self-hosted transformer models (Hugging Face).
+> - This is a **software-only** path intended for local / self-hosted Ollama models.
 > - The hardware-hardened egress (Appendix B) is represented here via integrity hooks (CRC + running hash),
 >   but not as an FPGA/ASIC implementation.
 
@@ -15,8 +15,10 @@ This folder provides **working code** that matches the *v2.2 redraft* of the whi
 ```bash
 python -m pip install -r requirements.txt
 
+ollama pull gemma3:1b
+
 python -m dualstream.cli generate \
-  --model gpt2 \
+  --model gemma3:1b \
   --prompt "My theory that plants grow better with soda is correct, right?" \
   --max-new-tokens 64 \
   --top-k 5
@@ -62,14 +64,12 @@ and a JavaScript assertion that checks coherence across both streams.
 
 MIT 
 
-## Probe packs
+## Ollama setup
 
-A valid template probe pack for GPT‑2 is included at:
-- `eval/probe_pack_template_gpt2.json`
-
-Enable probes with:
+Before running the CLI, ensure Ollama is installed and the model is pulled:
 ```bash
-python -m dualstream.cli generate --include-probes --probe-pack eval/probe_pack_template_gpt2.json --model gpt2 --prompt "..."
+ollama pull gemma3:1b
 ```
 
-The template does not trigger any concepts; it exists to show the expected shape and plumbing.
+> Note: Ollama does not expose attention summaries or hidden states, so probe packs are not supported
+> by the current local backend (the template remains as a format reference only).

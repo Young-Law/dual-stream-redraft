@@ -2,7 +2,7 @@ description: "Dual-Stream Architecture (DSA) — promptfoo harness"
 providers:
   - id: file://eval/dualstream_provider.py
     config:
-      model: gpt2
+      model: gemma3:1b
       max_new_tokens: 64
       top_k: 5
       seed: 7

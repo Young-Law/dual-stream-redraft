@@ -19,9 +19,10 @@ def _get_gen(model: str) -> DualStreamGenerator:
 
 def call_api(prompt: str, options: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     cfg = options.get("config", {}) or {}
-    model = cfg.get("model", "gpt2")
+    model = cfg.get("model", "gemma3:1b")
+    host = cfg.get("ollama_host")
 
-    gen = _get_gen(model)
+    gen = _get_gen(model) if host is None else DualStreamGenerator(model, host=host)
 
     gcfg = GenerationConfig(
         model=model,
@@ -38,7 +39,12 @@ def call_api(prompt: str, options: Dict[str, Any], context: Dict[str, Any]) -> D
     )
 
     result = gen.generate(prompt, gcfg)
-    monologue_text = render_monologue_text(result["frames"], tokenizer_decode=gen.tokenizer.decode)
+    token_lookup = result["token_lookup"]
+
+    def _decode_token(tid: int) -> str:
+        return token_lookup.get(tid, str(tid))
+
+    monologue_text = render_monologue_text(result["frames"], tokenizer_decode=_decode_token)
 
     return {
         # promptfoo supports object outputs; JS assertions can access this as `output.answer` etc.

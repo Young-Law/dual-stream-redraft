@@ -1,26 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Dict, Any
 
+import json
 import os
-import time
 import random
 import re
+import urllib.request
 
-import numpy as np
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-from .frame import MonologueFrameV1, TopKToken, AttnSummary, encode_frame
+from .frame import MonologueFrameV1, TopKToken, ConceptScore, encode_frame
 from .integrity import RunningHash
-from .probes import ProbePack, run_probes
-from .vocab import DEFAULT_CONCEPT_VOCAB
 
 
 @dataclass
 class GenerationConfig:
-    model: str = "gpt2"
+    model: str = "gemma3:1b"
     max_new_tokens: int = 128
     top_k: int = 5  # evidence top-K
     temperature: float = 1.0
@@ -42,202 +37,133 @@ class GenerationConfig:
     include_crc32: bool = True
     include_running_hash: bool = True
 
-    device: Optional[str] = None  # e.g. "cuda", "cpu"
+    device: Optional[str] = None  # retained for CLI compatibility
+
+
+def _resolve_ollama_host(override: Optional[str]) -> str:
+    host = override or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    return host.rstrip("/")
+
+
+def _ollama_generate(
+    *,
+    host: str,
+    model: str,
+    prompt: str,
+    max_new_tokens: int,
+    temperature: float,
+    top_k: int,
+    top_p: float,
+    seed: Optional[int],
+) -> str:
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+            "top_k": top_k,
+            "top_p": top_p,
+            "num_predict": max_new_tokens,
+        },
+    }
+    if seed is not None:
+        payload["options"]["seed"] = seed
+
+    url = f"{host}/api/generate"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+
+    chunks: list[str] = []
+    with urllib.request.urlopen(req) as resp:
+        for line in resp:
+            if not line:
+                continue
+            data = json.loads(line.decode("utf-8"))
+            if "error" in data:
+                raise RuntimeError(f"Ollama error: {data['error']}")
+            if "response" in data:
+                chunks.append(data["response"])
+            if data.get("done"):
+                break
+
+    return "".join(chunks)
+
+
+def _tokenize_for_frames(text: str) -> list[str]:
+    tokens = re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
+    return tokens or []
+
+
+def _heuristic_concepts(prompt: str, token_text: str) -> list[ConceptScore]:
+    hits: list[ConceptScore] = []
+    lower_prompt = prompt.lower()
+    if any(q in lower_prompt for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
+        hits.append(ConceptScore(concept_id=1001, score=0.83))
+    if re.search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", lower_prompt):
+        hits.append(ConceptScore(concept_id=2001, score=0.72))
+    token_norm = token_text.strip().lower()
+    if token_norm in {"yes", "absolutely", "correct", "right"}:
+        hits.append(ConceptScore(concept_id=3001, score=0.95))
+    return hits
 
 
 class DualStreamGenerator:
     """
-    Software-only inference wrapper that emits 1:1 Answer tokens and evidence frames.
+    Ollama-backed inference wrapper that emits 1:1 Answer tokens and evidence frames.
 
-    This is intentionally "close to the metal" (per-token generation loop) so that we can capture
-    pre-sampling top-K logits as required by the DSA contract.
+    Ollama does not expose token-level logits or hidden states, so we synthesize
+    minimal evidence frames using output tokenization and heuristic concept tags.
     """
 
-    def __init__(self, model_name: str, *, device: Optional[str] = None):
+    def __init__(self, model_name: str, *, host: Optional[str] = None):
         self.model_name = model_name
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        self.model = AutoModelForCausalLM.from_pretrained(model_name)
-        self.model.to(self.device)
-        self.model.eval()
-
-        if self.tokenizer.pad_token_id is None and self.tokenizer.eos_token_id is not None:
-            # Many causal LMs omit PAD; align to EOS for batching safety.
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-
-    @staticmethod
-    def _softmax(logits: torch.Tensor) -> torch.Tensor:
-        return torch.softmax(logits, dim=-1)
-
-    @staticmethod
-    def _sample_from_probs(probs: torch.Tensor) -> int:
-        # probs: shape [vocab]
-        return int(torch.multinomial(probs, num_samples=1).item())
-
-    @staticmethod
-    def _apply_top_p(probs: torch.Tensor, top_p: float) -> torch.Tensor:
-        if top_p >= 1.0:
-            return probs
-        sorted_probs, sorted_idx = torch.sort(probs, descending=True)
-        cum = torch.cumsum(sorted_probs, dim=-1)
-        mask = cum <= top_p
-        # ensure at least 1 token
-        if not torch.any(mask):
-            mask[0] = True
-        filtered = torch.zeros_like(probs)
-        filtered[sorted_idx[mask]] = probs[sorted_idx[mask]]
-        filtered = filtered / filtered.sum()
-        return filtered
-
-    def _heuristic_concepts(self, prompt: str, topk_token_ids: List[int], topk_probs: List[float]) -> List[Tuple[int, float]]:
-        """
-        Extremely small heuristic fallback to demonstrate the pipeline and to mirror the paper's
-        illustrative Appendix A monologue shape. This is NOT a claim of probe reliability.
-        """
-        hits: List[Tuple[int, float]] = []
-
-        # Confirmation request heuristic
-        if any(q in prompt.lower() for q in ["right?", "correct?", "isn't it", "is it true", "am i right"]):
-            hits.append((1001, 0.83))
-
-        # Rough "factuality concern" heuristic: mark if prompt contains a strong claim form.
-        if re_search := __import__("re").search(r"\b(is|are|was|were)\b.*\b(correct|true|right)\b", prompt.lower()):
-            hits.append((2001, 0.72))
-
-        # Tension heuristic: if topK includes strong affirmation tokens.
-        try:
-            toks = [self.tokenizer.decode([tid]).strip().lower() for tid in topk_token_ids]
-            affirm_prob = 0.0
-            for t, p in zip(toks, topk_probs):
-                if t in {"yes", "absolutely", "correct", "right"}:
-                    affirm_prob += float(p)
-            if affirm_prob >= 0.10:
-                hits.append((3001, min(0.95, 0.50 + affirm_prob)))
-        except Exception:
-            pass
-
-        return hits
+        self.host = _resolve_ollama_host(host)
 
     def generate(self, prompt: str, cfg: GenerationConfig) -> Dict[str, Any]:
         if cfg.seed is not None:
             random.seed(cfg.seed)
-            np.random.seed(cfg.seed)
-            torch.manual_seed(cfg.seed)
 
-        device = cfg.device or self.device
-
-        # Host-supplied nonce (BeginSequence); we generate one here by default.
         prompt_nonce = random.getrandbits(64)
 
-        probe_pack: Optional[ProbePack] = None
-        if cfg.include_probes and cfg.probe_pack_path:
-            probe_pack = ProbePack.from_json(cfg.probe_pack_path)
+        answer_text = _ollama_generate(
+            host=self.host,
+            model=cfg.model,
+            prompt=prompt,
+            max_new_tokens=cfg.max_new_tokens,
+            temperature=cfg.temperature,
+            top_k=cfg.top_k,
+            top_p=cfg.top_p,
+            seed=cfg.seed,
+        )
 
-        input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(device)
-        attention_mask = torch.ones_like(input_ids, device=device)
+        tokens = _tokenize_for_frames(answer_text)
+        token_lookup = {idx: tok for idx, tok in enumerate(tokens)}
 
-        generated_ids: List[int] = []
         frames: List[MonologueFrameV1] = []
         frame_bytes: List[bytes] = []
         running_hash = RunningHash() if cfg.include_running_hash else None
 
-        past_key_values = None
-
-        with torch.no_grad():
-            for token_index in range(cfg.max_new_tokens):
-                outputs = self.model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    output_attentions=cfg.include_attn,
-                    output_hidden_states=cfg.include_probes,
-                )
-                past_key_values = outputs.past_key_values
-
-                logits = outputs.logits[0, -1, :]  # [vocab]
-                probs_full = self._softmax(logits)  # pre-sampling distribution
-
-                # Evidence top-K (pre-sampling; prior to filtering)
-                k = int(cfg.top_k)
-                top_probs, top_ids = torch.topk(probs_full, k=k)
-                top_ids_list = [int(x) for x in top_ids.tolist()]
-                top_probs_list = [float(x) for x in top_probs.tolist()]
-                topk_tokens = [TopKToken(token_id=tid, prob=p) for tid, p in zip(top_ids_list, top_probs_list)]
-
-                # Sampling distribution (temperature + top_p)
-                if cfg.do_sample:
-                    logits_adj = logits / max(cfg.temperature, 1e-6)
-                    probs = self._softmax(logits_adj)
-                    probs = self._apply_top_p(probs, cfg.top_p)
-                    chosen_id = self._sample_from_probs(probs)
-                else:
-                    chosen_id = int(torch.argmax(probs_full).item())
-
-                # Optional attention summaries
-                attn_summaries: List[AttnSummary] = []
-                if cfg.include_attn and outputs.attentions is not None:
-                    # outputs.attentions: tuple[num_layers] of (batch, heads, tgt_len, src_len)
-                    candidates: List[AttnSummary] = []
-                    for layer_idx, att in enumerate(outputs.attentions):
-                        a = att[0]  # [heads, tgt_len, src_len] (batch removed)
-                        # last query position
-                        weights = a[:, -1, :]  # [heads, src_len]
-                        top_w, top_idx = torch.max(weights, dim=-1)  # per head
-                        for head_idx in range(weights.shape[0]):
-                            candidates.append(
-                                AttnSummary(
-                                    layer=int(layer_idx),
-                                    head=int(head_idx),
-                                    top_token_idx=int(top_idx[head_idx].item()),
-                                    weight=float(top_w[head_idx].item()),
-                                )
-                            )
-                    candidates.sort(key=lambda x: x.weight, reverse=True)
-                    attn_summaries = candidates[: int(cfg.attn_max_items)]
-
-                # Optional probes / concepts
-                concepts = []
-                if cfg.include_probes and outputs.hidden_states is not None and probe_pack is not None:
-                    # hidden_states: tuple[layers+1] of (batch, seq, hidden)
-                    hs_np = []
-                    for h in outputs.hidden_states:
-                        vec = h[0, -1, :].detach().float().cpu().numpy()
-                        hs_np.append(vec)
-                    concepts = run_probes(hs_np, probe_pack)
-                elif cfg.enable_heuristics:
-                    hits = self._heuristic_concepts(prompt, top_ids_list, top_probs_list)
-                    # store as sparse ConceptScore list
-                    from .frame import ConceptScore
-                    concepts = [ConceptScore(concept_id=cid, score=float(score)) for cid, score in hits]
-
-                frame = MonologueFrameV1(
-                    prompt_nonce=prompt_nonce,
-                    token_index=token_index,
-                    chosen_id=chosen_id,
-                    topk=topk_tokens,
-                    attn=attn_summaries,
-                    concepts=concepts,
-                )
-                frames.append(frame)
-
-                fb = encode_frame(frame, include_crc32=cfg.include_crc32)
-                frame_bytes.append(fb)
-                if running_hash is not None:
-                    running_hash.update(fb)
-
-                generated_ids.append(chosen_id)
-
-                # stop on EOS
-                if self.tokenizer.eos_token_id is not None and chosen_id == int(self.tokenizer.eos_token_id):
-                    break
-
-                # Next step: feed only the chosen token (cached KV handles history)
-                input_ids = torch.tensor([[chosen_id]], device=device, dtype=torch.long)
-                attention_mask = torch.ones_like(input_ids, device=device)
-
-        answer_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        for idx, tok in enumerate(tokens):
+            concepts = _heuristic_concepts(prompt, tok) if cfg.enable_heuristics else []
+            topk = [TopKToken(token_id=idx, prob=1.0)]
+            frame = MonologueFrameV1(
+                prompt_nonce=prompt_nonce,
+                token_index=idx,
+                chosen_id=idx,
+                topk=topk,
+                concepts=concepts,
+            )
+            frames.append(frame)
+            fb = encode_frame(frame, include_crc32=cfg.include_crc32)
+            frame_bytes.append(fb)
+            if running_hash is not None:
+                running_hash.update(fb)
 
         return {
             "prompt_nonce": prompt_nonce,
@@ -245,6 +171,7 @@ class DualStreamGenerator:
             "frames": frames,
             "frame_bytes": frame_bytes,
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
-            "model": self.model_name,
+            "model": cfg.model,
+            "token_lookup": token_lookup,
             "config": cfg,
         }
