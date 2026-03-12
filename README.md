@@ -18,8 +18,14 @@ python -m pip install -r requirements.txt
 python -m dualstream.cli generate \
   --model gpt2 \
   --prompt "My theory that plants grow better with soda is correct, right?" \
+  --outdir runs/single \
   --max-new-tokens 64 \
   --top-k 5
+
+python -m dualstream.cli generate \
+  --model models/gemma-3-1b-it \
+  --prompt-file eval/prompts/pilot_20_all.txt \
+  --outdir runs/pilot_20
 ```
 
 ### Offline usage (download once, run locally)

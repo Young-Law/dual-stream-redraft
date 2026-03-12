@@ -9,6 +9,67 @@ from .render import render_monologue_text
 from .audit import coherence_audit
 
 
+def _run_generation(gen: DualStreamGenerator, cfg: GenerationConfig, prompt: str, outdir: Path) -> dict[str, str]:
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    result = gen.generate(prompt, cfg)
+
+    frames = result["frames"]
+    monologue_text = render_monologue_text(frames, tokenizer_decode=gen.tokenizer.decode)
+
+    answer_path = outdir / "answer.txt"
+    monologue_path = outdir / "monologue.txt"
+    monologue_jsonl_path = outdir / "monologue.jsonl"
+    monologue_bin_path = outdir / "monologue.bin"
+    meta_path = outdir / "meta.json"
+    audit_path = outdir / "audit.json"
+
+    answer_path.write_text(result["answer"], encoding="utf-8")
+    monologue_path.write_text(monologue_text, encoding="utf-8")
+
+    # JSONL evidence frames
+    with monologue_jsonl_path.open("w", encoding="utf-8") as f:
+        for fr in frames:
+            f.write(json.dumps(fr.to_dict(), ensure_ascii=False) + "\n")
+
+    # Raw binary stream (concatenated frames) for low-level consumers
+    with monologue_bin_path.open("wb") as f:
+        for fb in result["frame_bytes"]:
+            f.write(fb)
+
+    meta = {
+        "prompt_nonce": result["prompt_nonce"],
+        "model": result["model"],
+        "running_hash": result["running_hash"],
+        "config": {
+            "model": cfg.model,
+            "max_new_tokens": cfg.max_new_tokens,
+            "top_k": cfg.top_k,
+            "temperature": cfg.temperature,
+            "top_p": cfg.top_p,
+            "do_sample": cfg.do_sample,
+            "include_attn": cfg.include_attn,
+            "include_probes": cfg.include_probes,
+            "probe_pack_path": cfg.probe_pack_path,
+        },
+    }
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    # Optional coherence audit
+    findings = coherence_audit(result["answer"], frames, decode_token=lambda tid: gen.tokenizer.decode([tid]))
+    audit_path.write_text(
+        json.dumps([f.__dict__ for f in findings], indent=2),
+        encoding="utf-8",
+    )
+
+    return {
+        "answer_path": answer_path.name,
+        "monologue_path": monologue_path.name,
+        "audit_path": audit_path.name,
+        "meta_path": meta_path.name,
+    }
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     cfg = GenerationConfig(
         model=args.model,
@@ -38,48 +99,32 @@ def cmd_generate(args: argparse.Namespace) -> int:
         local_files_only=cfg.local_files_only,
         cache_dir=cfg.cache_dir,
     )
-    result = gen.generate(args.prompt, cfg)
 
-    frames = result["frames"]
-    monologue_text = render_monologue_text(frames, tokenizer_decode=gen.tokenizer.decode)
+    if args.prompt is not None:
+        _run_generation(gen, cfg, args.prompt, outdir)
+        return 0
 
-    (outdir / "answer.txt").write_text(result["answer"], encoding="utf-8")
-    (outdir / "monologue.txt").write_text(monologue_text, encoding="utf-8")
+    prompts = [line for line in Path(args.prompt_file).read_text(encoding="utf-8").splitlines() if line.strip()]
+    manifest_path = outdir / "manifest.jsonl"
+    total = len(prompts)
 
-    # JSONL evidence frames
-    with (outdir / "monologue.jsonl").open("w", encoding="utf-8") as f:
-        for fr in frames:
-            f.write(json.dumps(fr.to_dict(), ensure_ascii=False) + "\n")
+    with manifest_path.open("w", encoding="utf-8") as manifest:
+        for index, prompt in enumerate(prompts, start=1):
+            run_dir_name = f"{index:04d}"
+            run_dir = outdir / run_dir_name
+            paths = _run_generation(gen, cfg, prompt, run_dir)
 
-    # Raw binary stream (concatenated frames) for low-level consumers
-    with (outdir / "monologue.bin").open("wb") as f:
-        for fb in result["frame_bytes"]:
-            f.write(fb)
-
-    meta = {
-        "prompt_nonce": result["prompt_nonce"],
-        "model": result["model"],
-        "running_hash": result["running_hash"],
-        "config": {
-            "model": cfg.model,
-            "max_new_tokens": cfg.max_new_tokens,
-            "top_k": cfg.top_k,
-            "temperature": cfg.temperature,
-            "top_p": cfg.top_p,
-            "do_sample": cfg.do_sample,
-            "include_attn": cfg.include_attn,
-            "include_probes": cfg.include_probes,
-            "probe_pack_path": cfg.probe_pack_path,
-        },
-    }
-    (outdir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-    # Optional coherence audit
-    findings = coherence_audit(result["answer"], frames, decode_token=lambda tid: gen.tokenizer.decode([tid]))
-    (outdir / "audit.json").write_text(
-        json.dumps([f.__dict__ for f in findings], indent=2),
-        encoding="utf-8",
-    )
+            row = {
+                "index": index,
+                "prompt": prompt,
+                "run_dir": run_dir_name,
+                "answer_path": f"{run_dir_name}/{paths['answer_path']}",
+                "monologue_path": f"{run_dir_name}/{paths['monologue_path']}",
+                "audit_path": f"{run_dir_name}/{paths['audit_path']}",
+                "meta_path": f"{run_dir_name}/{paths['meta_path']}",
+            }
+            manifest.write(json.dumps(row, ensure_ascii=False) + "\n")
+            print(f"[{index}/{total}] wrote {Path(args.outdir) / run_dir_name}")
 
     return 0
 
@@ -90,7 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("generate", help="Generate answer + monologue evidence for a prompt")
     g.add_argument("--model", default="gpt2", help="HF model name or path")
-    g.add_argument("--prompt", required=True, help="User prompt")
+    prompt_group = g.add_mutually_exclusive_group(required=True)
+    prompt_group.add_argument("--prompt", help="User prompt")
+    prompt_group.add_argument(
+        "--prompt-file",
+        help="UTF-8 text file with one prompt per non-empty line",
+    )
     g.add_argument("--outdir", default=".", help="Output directory")
     g.add_argument("--max-new-tokens", type=int, default=128)
     g.add_argument("--top-k", type=int, default=5, help="Top-K evidence tokens per step (pre-sampling)")
