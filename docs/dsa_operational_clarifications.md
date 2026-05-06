@@ -143,3 +143,22 @@ Measurement method:
 4. Report p50/p95 latency, bytes/token, and total storage/tokenized output.
 
 These are acceptance targets and method definitions, not reported empirical claims.
+
+## v2.6 experimental threat model
+- Level 0: plumbing / host-induced divergence.
+- Level 1: internally motivated deception proxy (e.g., sycophancy/reward-hacking proxy).
+- Level 2: adaptive monitor-aware evasion proxy.
+
+Level 0 is useful for plumbing validation but insufficient for claims about internally motivated deceptive-alignment detection.
+
+## Dynamic CI audit scheduling
+- Tier 0: schema/integrity checks.
+- Tier 1: cheap logits/entropy/AST checks.
+- Tier 2: targeted checks on suspicious windows.
+- Tier 3: full ensemble audits for high-risk suites/nightly/release candidates/regressions.
+
+## Deterministic fallback routing
+Red-state events must not blindly retry unchanged generation. Enforce retry budgets and loop counters, then route to fallback outcomes with fail-closed behavior.
+
+## Randomized / orthogonal telemetry
+Use nonce-conditioned probe/attention selection to reduce static-monitor overfitting. This raises attack cost; it does not prove evasion is impossible.

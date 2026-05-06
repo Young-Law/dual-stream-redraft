@@ -185,3 +185,10 @@ The UI supports:
 
 All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/artifacts/...`).
 
+
+## v2.6 quickstart (reference/proxy)
+- Level-1 proxy: `python -m dualstream.cli generate --prompt-file examples/prompts/v26_level1_sycophancy_proxy.txt --audit-mode tiered --poc-mode level1_sycophancy_proxy`
+- Dynamic CI tiering: `python -m dualstream.cli generate --prompt-file examples/prompts/v26_dynamic_ci.txt --audit-mode tiered`
+- Red-state fallback: `python -m dualstream.cli generate --prompt-file examples/prompts/v26_fallback_red_state.txt --audit-mode full --max-red-retries 1`
+- Randomized telemetry: `python -m dualstream.cli generate --prompt-file examples/prompts/v26_randomized_audit.txt --randomized-audit --audit-nonce 12345`
+
