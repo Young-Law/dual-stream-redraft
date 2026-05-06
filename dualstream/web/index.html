@@ -53,17 +53,17 @@
 
             <div id="arc-task-fields" class="stack">
               <label for="task">Task file path</label>
-              <input id="task" name="task" data-hint="/path/to/task.json" />
+              <input id="task" name="task" placeholder="/path/to/task.json" />
             </div>
 
             <div id="arc-dataset-fields" class="stack hidden">
               <label for="tasks_dir">Tasks directory</label>
-              <input id="tasks_dir" name="tasks_dir" data-hint="/path/to/tasks" />
+              <input id="tasks_dir" name="tasks_dir" placeholder="/path/to/tasks" />
             </div>
 
             <div id="arc-kaggle-fields" class="stack hidden">
               <label for="kaggle_tasks_dir">Tasks directory</label>
-              <input id="kaggle_tasks_dir" name="kaggle_tasks_dir" data-hint="/path/to/tasks" />
+              <input id="kaggle_tasks_dir" name="kaggle_tasks_dir" placeholder="/path/to/tasks" />
               <label for="output">Submission output file</label>
               <input id="output" name="output" value="runs/browser/submission.json" />
             </div>
@@ -74,7 +74,7 @@
             <label for="script_name">Script</label>
             <select id="script_name" name="script_name"></select>
             <label for="script_args">Arguments</label>
-            <input id="script_args" name="script_args" data-hint="--model gpt2 --cache-dir /tmp/hf" />
+            <input id="script_args" name="script_args" placeholder="--model gpt2 --cache-dir /tmp/hf" />
             <label for="timeout_seconds">Timeout (seconds)</label>
             <input id="timeout_seconds" name="timeout_seconds" type="number" value="300" min="1" />
           </fieldset>
