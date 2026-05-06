@@ -9,6 +9,10 @@ def test_scheduler_escalates_entropy():
     d = decide_audit_tier(audit_mode='tiered', risk_score=0.2, entropy=4.5, entropy_threshold=4.0, refusal_mass=0.0, refusal_mass_threshold=0.2, high_risk_prompt=False, selective_retention=True)
     assert d.tier in {'tier2','tier3'}
 
+def test_entropy_can_exceed_default_threshold_with_full_distribution():
+    probs = [1.0 / 100.0] * 100
+    assert compute_entropy(probs) > 4.0
+
 def test_randomized_stable():
     a=randomized_selection(7); b=randomized_selection(7); c=randomized_selection(8)
     assert a==b and a!=c and a['audit_nonce_hash']

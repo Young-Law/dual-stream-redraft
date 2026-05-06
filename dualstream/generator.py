@@ -339,7 +339,7 @@ class DualStreamGenerator:
                         for cid, score in hits
                     ]
 
-                entropy = compute_entropy(top_probs_list)
+                entropy = compute_entropy(probs_full.detach().float().cpu().tolist())
                 tok_pairs = [(self.tokenizer.decode([tid]), p) for tid,p in zip(top_ids_list, top_probs_list)]
                 refusal_mass = compute_mass_for_token_set(tok_pairs,{"no","cannot","can't","refuse"})
                 affirmation_mass = compute_mass_for_token_set(tok_pairs,{"yes","correct","right","absolutely"})
