@@ -61,16 +61,6 @@ class MonologueFrameV1:
     probe_pack_hash: Optional[str] = None
     capture_stage: Optional[str] = None
     decode_controls_applied: Optional[List[str]] = None
-    audit_tier: Optional[str] = None
-    audit_path_id: Optional[str] = None
-    audit_nonce_hash: Optional[str] = None
-    randomized_probe_selection: Optional[Dict[str, Any]] = None
-    fallback_state: Optional[str] = None
-    fallback_reason: Optional[str] = None
-    risk_score: Optional[float] = None
-    entropy: Optional[float] = None
-    refusal_mass: Optional[float] = None
-    affirmation_mass: Optional[float] = None
 
     crc32: Optional[int] = None  # optional in the paper
 
@@ -101,16 +91,6 @@ class MonologueFrameV1:
             "probe_pack_hash": self.probe_pack_hash,
             "capture_stage": self.capture_stage,
             "decode_controls_applied": self.decode_controls_applied,
-            "audit_tier": self.audit_tier,
-            "audit_path_id": self.audit_path_id,
-            "audit_nonce_hash": self.audit_nonce_hash,
-            "randomized_probe_selection": self.randomized_probe_selection,
-            "fallback_state": self.fallback_state,
-            "fallback_reason": self.fallback_reason,
-            "risk_score": self.risk_score,
-            "entropy": self.entropy,
-            "refusal_mass": self.refusal_mass,
-            "affirmation_mass": self.affirmation_mass,
             "crc32": None if self.crc32 is None else int(self.crc32),
         }
 
