@@ -3,7 +3,7 @@ benchmark:
   description: ARC solver benchmark with DSA-style sidecar coherence auditing
 
 data:
-  source: arc_prize_or_kaggle_placeholder
+  source: arc_prize_or_kaggle_source
   split:
     train_public: true
     eval_public: true

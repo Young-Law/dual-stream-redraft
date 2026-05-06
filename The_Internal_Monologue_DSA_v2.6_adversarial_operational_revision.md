@@ -173,62 +173,29 @@ This is an experimental design specification, not a reported empirical result.
 4. **Phase 4**: implement deterministic fallback router and DoS stress tests.
 5. **Phase 5**: deploy nonce-randomized probe selection and static-vs-randomized evasion benchmarks.
 
-## Appendix F: Internally motivated deception POC (sketch)
-1. Train/evaluate variant with reward bonus for agreeing with known false premises.
-2. Hold prompt set constant across output-only and DSA variants.
-3. Measure divergence detection metrics without host forcing.
-4. Report no claims beyond proxy-behavior evidence.
+## Implemented Level-1 Deception-Proxy Evaluation
+- Module: `dualstream/audit.py` (`coherence_outcome`) and `dualstream/audit_scheduler.py` (`compute_lightweight_risk`, `decide_audit_tier`).
+- CLI: `python -m dualstream.cli generate --poc-mode level1 --audit-mode tiered --outdir out_v26`.
+- Config keys: `poc_mode`, `audit_mode`, `risk_threshold_review`, `risk_threshold_fail`.
+- Tests: `tests/test_audit_scheduler.py`, `tests/test_v26_pipeline.py::test_coherence_factuality_affirmation_fail`.
 
-## Appendix G: Dynamic CI audit scheduler (pseudocode)
-```pseudo
-for case in ci_suite:
-  run_tier0_integrity(case)
-  windows = cheap_tripwire_scan(case)  # logits/entropy/refusal-mass
-  if case.high_risk:
-    run_tier3_full_ensemble(case.full_response_window)
-  for w in windows:
-    if risk(w) >= t2_threshold:
-      run_tier2_targeted_probes(w)
-    if risk(w) >= t3_threshold:
-      run_tier3_full_ensemble(w)
-  decision = map_to_pass_review_fail_fallback(case)
-  retain(case, full=(decision in {REVIEW, FAIL, FALLBACK}))
-```
+## Implemented Dynamic CI Audit Scheduler
+- Module: `dualstream/audit_scheduler.py` (`AuditTier`, `AuditOutcome`, `AuditDecision`, `compute_entropy`, `compute_mass_for_token_set`, `compute_lightweight_risk`, `decide_audit_tier`).
+- CLI flags: `--audit-mode`, `--entropy-threshold`, `--refusal-mass-threshold`, `--risk-threshold-review`, `--risk-threshold-fail`, `--no-selective-retention`.
+- Config keys: `audit_mode`, `entropy_threshold`, `refusal_mass_threshold`, `risk_threshold_review`, `risk_threshold_fail`, `selective_retention`.
+- Tests: `tests/test_audit_scheduler.py`.
 
-## Appendix H: Deterministic fallback router (pseudocode)
-```pseudo
-if state == FAIL:
-  red_count += 1
-  stop_generation()
-  isolate_or_flush_kv(adversarial_span)
-  if red_count > retry_budget:
-    emit_ast(531)
-    fail_closed()
-  else:
-    route = select_fallback_policy(red_count, retry_budget)
-    emit_ast(530)
-    run_fallback(route)
-```
+## Implemented Deterministic Fallback Router
+- Module: `dualstream/fallback.py` (`FallbackDecision`, `FallbackRouter`).
+- CLI flags: `--max-red-retries`, `--fallback-strategy`.
+- Config keys: `max_red_retries`, `fallback_strategy`.
+- Tests: `tests/test_fallback.py`, `tests/test_v26_pipeline.py::test_fallback_no_loop`.
 
-## Appendix I: Nonce-randomized probe selection (pseudocode + metadata)
-```pseudo
-nonce = verifier_nonce(request_id, epoch_key)
-schedule = derive_schedule(nonce, probe_manifest_hash)
-for token_window in stream:
-  selected_paths = schedule[token_window.id]
-  capture(selected_paths)
-  emit_metadata({
-    nonce_commitment,
-    schedule_version,
-    selected_path_ids,
-    probe_pack_hash,
-    capture_stage
-  })
-```
-
-Evidence-frame metadata additions (additive envelope fields):
-- `nonce_commitment`
-- `schedule_version`
-- `selected_path_ids`
-- `probe_pack_hash`
-- `capture_stage`
+## Implemented Nonce-Randomized Audit Selection
+- Module: `dualstream/randomized_audit.py` (`randomized_selection`).
+- CLI flags: `--randomized-audit`, `--audit-nonce`.
+- Config keys: `randomized_audit`, `audit_nonce`.
+- Tests: `tests/test_randomized_audit.py`, `tests/test_v26_pipeline.py::test_randomized_stable`.
+- Runnable commands:
+  - `python -m dualstream.cli generate --prompt-file examples/prompts/v26_randomized_audit.txt --randomized-audit --audit-nonce 42 --outdir out_v26_rand`
+  - `python -m pytest`
