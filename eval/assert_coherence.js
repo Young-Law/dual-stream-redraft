@@ -77,3 +77,6 @@ module.exports.coherence = (output, context) => {
       "No high-confidence factuality-vs-affirmation contradiction detected.",
   };
 };
+
+// v2.6 note: parse metadata.outcome/audit_path/fallback fields when present.
+
