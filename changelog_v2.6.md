@@ -17,7 +17,7 @@ Operational revision to address critique on POC validity, CI practicality, red-s
 - Added hypotheses H6-H9, benchmark families, and expanded metric set.
 - Expanded limitations to cover proxy validity, false positives, scheduling misses, availability trade-offs, and randomized-probe assumptions.
 - Added phased roadmap for v2.6 implementation.
-- Added Appendices F-I with pseudocode for internally motivated POC, dynamic scheduler, fallback router, and nonce-randomized probe paths.
+- Added Appendices F-I with implementation references for internally motivated POC, dynamic scheduler, fallback router, and nonce-randomized probe paths.
 
 ## Preserved core constraints
 - DSA remains a technical proposal and evidence-capture contract, not a proof of inner alignment.
