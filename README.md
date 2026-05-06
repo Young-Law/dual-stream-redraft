@@ -185,3 +185,7 @@ The UI supports:
 
 All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/artifacts/...`).
 
+
+
+## v2.6 pipeline alignment
+See `docs/v2.6_pipeline_alignment.md` for threat-model levels, tiered audit scheduling, fallback routing, randomized telemetry, and CLI flags.

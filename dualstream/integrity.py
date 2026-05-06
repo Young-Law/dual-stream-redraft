@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 import hashlib
 
-# Appendix B (v2.2 redraft) sketches integrity primitives (frame CRC + sequence running hash).
+# Appendix B (v2.2 redraft) defines integrity primitives (frame CRC + sequence running hash).
 # In the software-only path, this module provides a minimal running-hash accumulator.
 
 DEFAULT_HASH = "sha256"
