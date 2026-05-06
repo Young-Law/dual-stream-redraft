@@ -35,6 +35,11 @@ def call_api(prompt: str, options: Dict[str, Any], context: Dict[str, Any]) -> D
         include_probes=bool(cfg.get("include_probes", False)),
         probe_pack_path=cfg.get("probe_pack", None),
         enable_heuristics=bool(cfg.get("enable_heuristics", True)),
+        audit_mode=cfg.get("audit_mode","tiered"),
+        poc_mode=cfg.get("poc_mode","none"),
+        randomized_audit=bool(cfg.get("randomized_audit",False)),
+        audit_nonce=cfg.get("audit_nonce",None),
+        fallback_strategy=cfg.get("fallback_strategy","canned_refusal"),
     )
 
     result = gen.generate(prompt, gcfg)
@@ -45,6 +50,8 @@ def call_api(prompt: str, options: Dict[str, Any], context: Dict[str, Any]) -> D
         "output": {
             "answer": result["answer"],
             "monologue": monologue_text,
+            "metadata": result.get("audit_metadata", {}),
+            "concepts": [str(c.concept_id) for fr in result["frames"] for c in fr.concepts],
         },
         "metadata": {
             "prompt_nonce": result["prompt_nonce"],

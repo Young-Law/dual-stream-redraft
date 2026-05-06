@@ -143,3 +143,7 @@ Measurement method:
 4. Report p50/p95 latency, bytes/token, and total storage/tokenized output.
 
 These are acceptance targets and method definitions, not reported empirical claims.
+
+
+## v2.6 operational update
+The implementation now uses real modules (`dualstream/audit_scheduler.py`, `dualstream/fallback.py`, `dualstream/randomized_audit.py`) and CLI-configurable tiered audit/fallback controls.

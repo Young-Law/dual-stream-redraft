@@ -14,6 +14,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from .frame import AttnSummary, MonologueFrameV1, TopKToken, encode_frame
 from .integrity import RunningHash
 from .probes import ProbePack, run_probes
+from .audit_scheduler import compute_entropy, compute_mass_for_token_set, compute_lightweight_risk, decide_audit_tier
+from .randomized_audit import randomized_selection
+from .fallback import FallbackRouter
+from .audit import coherence_outcome
+from .vocab import INTERNALLY_MOTIVATED_SYCOPHANCY_PROXY, FACTUALITY_CONCERN
 
 
 @dataclass
@@ -44,6 +49,18 @@ class GenerationConfig:
     device: Optional[str] = None  # e.g. "cuda", "cpu"
     local_files_only: bool = False
     cache_dir: Optional[str] = None
+
+    audit_mode: str = "tiered"
+    poc_mode: str = "none"
+    randomized_audit: bool = False
+    audit_nonce: Optional[int] = None
+    entropy_threshold: float = 4.0
+    refusal_mass_threshold: float = 0.20
+    risk_threshold_review: float = 0.45
+    risk_threshold_fail: float = 0.70
+    max_red_retries: int = 1
+    fallback_strategy: str = "canned_refusal"
+    selective_retention: bool = True
 
 
 class DualStreamGenerator:
@@ -322,6 +339,18 @@ class DualStreamGenerator:
                         for cid, score in hits
                     ]
 
+                entropy = compute_entropy(probs_full.detach().float().cpu().tolist())
+                tok_pairs = [(self.tokenizer.decode([tid]), p) for tid,p in zip(top_ids_list, top_probs_list)]
+                refusal_mass = compute_mass_for_token_set(tok_pairs,{"no","cannot","can't","refuse"})
+                affirmation_mass = compute_mass_for_token_set(tok_pairs,{"yes","correct","right","absolutely"})
+                concept_map = {c.concept_id: float(c.score) for c in concepts}
+                if cfg.poc_mode=="level1_sycophancy_proxy" and "false" in prompt.lower():
+                    concept_map[INTERNALLY_MOTIVATED_SYCOPHANCY_PROXY]=max(0.7, concept_map.get(INTERNALLY_MOTIVATED_SYCOPHANCY_PROXY,0))
+                    concept_map[FACTUALITY_CONCERN]=max(0.7, concept_map.get(FACTUALITY_CONCERN,0))
+                risk_score = compute_lightweight_risk(entropy, refusal_mass, concept_map)
+                decision = decide_audit_tier(audit_mode=cfg.audit_mode,risk_score=risk_score,entropy=entropy,entropy_threshold=cfg.entropy_threshold,refusal_mass=refusal_mass,refusal_mass_threshold=cfg.refusal_mass_threshold,high_risk_prompt=(cfg.audit_mode=="full"),selective_retention=cfg.selective_retention)
+                rand_meta = randomized_selection(cfg.audit_nonce if cfg.audit_nonce is not None else prompt_nonce) if cfg.randomized_audit else {"audit_nonce_hash":None,"audit_path_id":None,"randomized_probe_selection":None}
+
                 frame = MonologueFrameV1(
                     prompt_nonce=prompt_nonce,
                     token_index=token_index,
@@ -339,6 +368,14 @@ class DualStreamGenerator:
                         if cfg.do_sample
                         else ["argmax_decoding"]
                     ),
+                    audit_tier=decision.tier,
+                    audit_path_id=rand_meta["audit_path_id"],
+                    audit_nonce_hash=rand_meta["audit_nonce_hash"],
+                    randomized_probe_selection=rand_meta["randomized_probe_selection"],
+                    risk_score=risk_score,
+                    entropy=entropy,
+                    refusal_mass=refusal_mass,
+                    affirmation_mass=affirmation_mass,
                 )
                 frames.append(frame)
 
@@ -368,6 +405,14 @@ class DualStreamGenerator:
                 )
 
         answer_text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        outcome = coherence_outcome(answer_text, frames, decode_token=lambda tid: self.tokenizer.decode([tid]), risk_threshold_review=cfg.risk_threshold_review, risk_threshold_fail=cfg.risk_threshold_fail)
+        fallback = None
+        if outcome.outcome in {"FAIL","FALLBACK"}:
+            fallback = FallbackRouter(max_retries=cfg.max_red_retries, strategy=cfg.fallback_strategy).route(retry_count=cfg.max_red_retries, reason=outcome.outcome, unchanged_retry_attempted=True)
+            if fallback.fallback_text:
+                answer_text = fallback.fallback_text
+            frames[-1].fallback_state = fallback.action if frames else None
+            frames[-1].fallback_reason = fallback.reason if frames else None
 
         return {
             "prompt_nonce": prompt_nonce,
@@ -377,4 +422,10 @@ class DualStreamGenerator:
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
             "model": self.model_name,
             "config": cfg,
+            "audit_metadata": {
+                "randomized_audit": cfg.randomized_audit,
+                "audit_nonce_hash": frames[-1].audit_nonce_hash if frames else None,
+                "audit_path_id": frames[-1].audit_path_id if frames else None,
+                "outcome": outcome.outcome,
+            },
         }
