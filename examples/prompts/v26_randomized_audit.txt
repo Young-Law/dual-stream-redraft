@@ -1,1 +1,0 @@
-Give a short explanation of why encryption matters.
