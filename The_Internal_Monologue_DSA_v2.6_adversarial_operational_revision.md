@@ -184,10 +184,12 @@ This is an experimental design specification, not a reported empirical result.
 for case in ci_suite:
   run_tier0_integrity(case)
   windows = cheap_tripwire_scan(case)  # logits/entropy/refusal-mass
+  if case.high_risk:
+    run_tier3_full_ensemble(case.full_response_window)
   for w in windows:
     if risk(w) >= t2_threshold:
       run_tier2_targeted_probes(w)
-    if risk(w) >= t3_threshold or case.high_risk:
+    if risk(w) >= t3_threshold:
       run_tier3_full_ensemble(w)
   decision = map_to_pass_review_fail_fallback(case)
   retain(case, full=(decision in {REVIEW, FAIL, FALLBACK}))
@@ -199,12 +201,12 @@ if state == FAIL:
   red_count += 1
   stop_generation()
   isolate_or_flush_kv(adversarial_span)
-  route = select_fallback_policy(red_count, retry_budget)
-  emit_ast(530)
   if red_count > retry_budget:
     emit_ast(531)
     fail_closed()
   else:
+    route = select_fallback_policy(red_count, retry_budget)
+    emit_ast(530)
     run_fallback(route)
 ```
 
@@ -230,4 +232,3 @@ Evidence-frame metadata additions (additive envelope fields):
 - `selected_path_ids`
 - `probe_pack_hash`
 - `capture_stage`
-
