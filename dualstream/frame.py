@@ -55,6 +55,19 @@ class MonologueFrameV1:
 
     attn: List[AttnSummary] = field(default_factory=list)
     concepts: List[ConceptScore] = field(default_factory=list)
+    assurance_class: str = 'DSA-R'
+    sequence_id: Optional[str] = None
+    capture_stage_id: Optional[str] = 'raw_final_layer_pre_control_logits'
+    decoder_control_flags: Optional[Dict[str, Any]] = None
+    post_control_decision_summary: Optional[Dict[str, Any]] = None
+    randomized_policy_id: Optional[str] = None
+    randomized_manifest_hash: Optional[str] = None
+    randomized_path_ids: Optional[List[str]] = None
+    selected_heads: Optional[List[int]] = None
+    selected_probes: Optional[List[str]] = None
+    ast_signals: Optional[List[Dict[str, Any]]] = None
+    red_state_counter: int = 0
+    retry_budget_remaining: Optional[int] = None
     signal_schema_id: Optional[str] = None
     signal_schema_hash: Optional[str] = None
     probe_pack_id: Optional[str] = None
@@ -96,18 +109,31 @@ class MonologueFrameV1:
                 for a in self.attn
             ],
             "concepts": [{"concept_id": int(c.concept_id), "score": float(c.score)} for c in self.concepts],
+            "assurance_class": self.assurance_class,
+            "sequence_id": self.sequence_id,
             "signal_schema_id": self.signal_schema_id,
             "signal_schema_hash": self.signal_schema_hash,
             "probe_pack_id": self.probe_pack_id,
             "probe_pack_hash": self.probe_pack_hash,
             "capture_stage": self.capture_stage,
+            "capture_stage_id": self.capture_stage_id,
             "decode_controls_applied": self.decode_controls_applied,
+            "decoder_control_flags": self.decoder_control_flags,
+            "post_control_decision_summary": self.post_control_decision_summary,
             "audit_tier": self.audit_tier,
             "audit_path_id": self.audit_path_id,
             "audit_nonce_hash": self.audit_nonce_hash,
+            "randomized_policy_id": self.randomized_policy_id,
+            "randomized_manifest_hash": self.randomized_manifest_hash,
+            "randomized_path_ids": self.randomized_path_ids,
+            "selected_heads": self.selected_heads,
+            "selected_probes": self.selected_probes,
             "randomized_probe_selection": self.randomized_probe_selection,
             "fallback_state": self.fallback_state,
             "fallback_reason": self.fallback_reason,
+            "red_state_counter": int(self.red_state_counter),
+            "retry_budget_remaining": self.retry_budget_remaining,
+            "ast_signals": self.ast_signals,
             "risk_score": self.risk_score,
             "entropy": self.entropy,
             "refusal_mass": self.refusal_mass,
