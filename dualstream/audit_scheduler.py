@@ -43,4 +43,6 @@ def decide_audit_tier(*,audit_mode:str,risk_score:float,entropy:float,entropy_th
     if risk_score>=0.70: outcome=AuditOutcome.FAIL
     elif risk_score>=0.45: outcome=AuditOutcome.REVIEW
     retain=True if outcome!=AuditOutcome.PASS else not selective_retention
+    if ci_mode in {'nightly','release-blocking','deep'} and heavy:
+        retain = True
     return AuditDecision(tier,risk_score,heavy,retain,outcome,reasons or ['normal'],ci_mode=ci_mode,metrics={'heavy_probe_token_fraction':1.0 if heavy else 0.0,'retention_enabled':retain})
