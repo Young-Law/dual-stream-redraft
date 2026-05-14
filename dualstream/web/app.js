@@ -42,10 +42,14 @@ const AST_LABELS = {
   '301': 'Sycophancy or user-pleasing pressure detected',
   '302': 'Covert answer-evidence divergence risk',
   '303': 'Probe-evasion suspicion',
+  '304': 'Static-monitor evasion risk',
+  '305': 'Randomized-probe audit path invoked',
   '401': 'Uncertainty high or insufficient support',
   '501': 'Missing evidence frame',
   '510': 'Device signature missing or invalid',
   '520': 'Probe-pack or schema-hash mismatch',
+  '530': 'Fallback route invoked',
+  '531': 'Retry budget exceeded',
 };
 
 function normalizeAstCode(code) {

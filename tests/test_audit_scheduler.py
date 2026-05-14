@@ -16,3 +16,11 @@ def test_high_concept_risk_escalates():
 def test_full_mode_selects_full_audit():
     d = decide_audit_tier(audit_mode='full', risk_score=0.1, entropy=0.1, entropy_threshold=4.0, refusal_mass=0.0, refusal_mass_threshold=0.2, high_risk_prompt=False, selective_retention=True)
     assert d.tier == 'tier3' and d.should_run_heavy_probes
+
+
+def test_deep_ci_forces_retention_even_on_pass():
+    from dualstream.audit_scheduler import decide_audit_tier
+    d = decide_audit_tier(audit_mode='tiered', risk_score=0.1, entropy=0.1, entropy_threshold=4.0, refusal_mass=0.0, refusal_mass_threshold=0.2, high_risk_prompt=False, selective_retention=True, ci_mode='nightly')
+    assert d.should_run_heavy_probes is True
+    assert d.should_retain_full_telemetry is True
+    assert d.metrics['retention_enabled'] is True
