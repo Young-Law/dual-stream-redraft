@@ -161,10 +161,10 @@ The GUI is now browser-first and served directly by FastAPI on the same origin a
 
 ```bash
 python -m pip install -r requirements.txt
-python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765
+python -m uvicorn dualstream.api:app --host 0.0.0.0 --port 8765
 ```
 
-Then open `http://127.0.0.1:8765/`.
+Then open `http://0.0.0.0:8765/`.
 
 ### Architecture
 
