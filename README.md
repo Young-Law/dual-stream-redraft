@@ -130,7 +130,7 @@ python -m pip install -r requirements.txt
 If you need to pre-download while online, use the included helper:
 
 ```bash
-python scripts/download_model.py --model gpt2
+python scripts/download_model.py --model google/gemma-3-1b-it
 ```
 
 ### Offline happy path
@@ -140,10 +140,10 @@ python scripts/download_model.py --model gpt2
 3. Start the API + browser UI:
 
 ```bash
-python -m uvicorn dualstream.api:app --host 127.0.0.1 --port 8765
+python -m uvicorn dualstream.api:app --host 0.0.0.0 --port 8765
 ```
 
-4. Open `http://127.0.0.1:8765` in your browser.
+4. Open `http://0.0.0.0:8765` in your browser.
 
 ### Offline behavior
 
