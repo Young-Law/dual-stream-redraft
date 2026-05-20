@@ -21,3 +21,11 @@ def test_falsy_manifests_do_not_collapse_and_wrong_manifest_fails():
     assert len(set(hashes))==len(vals)
     sel = randomized_selection(9, manifest_data=False)
     assert not verify_randomized_selection(sel, nonce=9, manifest_data=0)
+
+
+def test_none_domain_does_not_collide_with_user_manifest_payload():
+    user_payload = ['__manifest_domain__', 'none']
+    none_sel = randomized_selection(11, manifest_data=None)
+    user_sel = randomized_selection(11, manifest_data=user_payload)
+    assert none_sel['randomized_manifest_hash'] != user_sel['randomized_manifest_hash']
+    assert not verify_randomized_selection(none_sel, nonce=11, manifest_data=user_payload)

@@ -9,8 +9,8 @@ def _stable_hash(data: Any) -> str:
 
 def _manifest_for_hash(manifest_data: Any) -> Any:
     if manifest_data is None:
-        return {"__manifest_none__": True}
-    return manifest_data
+        return ["__manifest_domain__", "none"]
+    return ["__manifest_domain__", "user", manifest_data]
 
 
 def randomized_selection(nonce: int | None, *, policy_id: str = "rand-v1", manifest_data: Any = None, total_heads: int = 16, subset_size: int = 4, sequence_id: str | None = None, token_index: int | None = None) -> Dict[str, Any]:
