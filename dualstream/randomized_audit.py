@@ -7,9 +7,16 @@ def _stable_hash(data: Any) -> str:
     return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _manifest_for_hash(manifest_data: Any) -> Any:
+    if manifest_data is None:
+        return ["__manifest_domain__", "none"]
+    return ["__manifest_domain__", "user", manifest_data]
+
+
 def randomized_selection(nonce: int | None, *, policy_id: str = "rand-v1", manifest_data: Any = None, total_heads: int = 16, subset_size: int = 4, sequence_id: str | None = None, token_index: int | None = None) -> Dict[str, Any]:
     nonce = 0 if nonce is None else int(nonce)
-    manifest_hash = _stable_hash(manifest_data)
+    manifest_input = _manifest_for_hash(manifest_data)
+    manifest_hash = _stable_hash(manifest_input)
     seed_material = f"{nonce}|{policy_id}|{manifest_hash}|{sequence_id or ''}|{token_index if token_index is not None else ''}"
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
