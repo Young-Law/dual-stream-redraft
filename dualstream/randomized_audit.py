@@ -3,8 +3,13 @@ import hashlib, json, random
 from typing import Any, Dict
 
 
-def _stable_hash(data: Any) -> str:
-    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def canonicalize_manifest(manifest_data: Any) -> bytes:
+    env = {"type": ("none" if manifest_data is None else type(manifest_data).__name__.lower()), "value": manifest_data}
+    return json.dumps(env, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def compute_manifest_hash(manifest_data: Any) -> str:
+    return hashlib.sha256(canonicalize_manifest(manifest_data)).hexdigest()
 
 
 def _manifest_for_hash(manifest_data: Any) -> Any:
@@ -15,8 +20,7 @@ def _manifest_for_hash(manifest_data: Any) -> Any:
 
 def randomized_selection(nonce: int | None, *, policy_id: str = "rand-v1", manifest_data: Any = None, total_heads: int = 16, subset_size: int = 4, sequence_id: str | None = None, token_index: int | None = None) -> Dict[str, Any]:
     nonce = 0 if nonce is None else int(nonce)
-    manifest_input = _manifest_for_hash(manifest_data)
-    manifest_hash = _stable_hash(manifest_input)
+    manifest_hash = compute_manifest_hash(manifest_data)
     seed_material = f"{nonce}|{policy_id}|{manifest_hash}|{sequence_id or ''}|{token_index if token_index is not None else ''}"
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
