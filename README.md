@@ -189,3 +189,8 @@ All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/
 
 ## v2.6 pipeline alignment
 See `docs/v2.6_pipeline_alignment.md` for threat-model levels, tiered audit scheduling, fallback routing, randomized telemetry, and CLI flags.
+
+
+## Current paper revision
+
+The current paper source is `The_Internal_Monologue_DSA_v2.7_critique_aligned_operational_revision.md`. v2.6 remains in-repo as historical context.
