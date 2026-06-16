@@ -25,3 +25,21 @@ def test_lite_ceiling_passes_for_ten_thousand_token_fixture():
     assert summary.raw_bytes_per_token <= 24
     assert_evidence_budget(summary)
     assert_retention_floor(summary)
+
+
+def test_directory_verify_rejects_internally_valid_shortened_artifact_bound_to_metadata(tmp_path):
+    import hashlib, json
+    from dualstream.verifier import verify_evidence_artifact
+
+    short = fixture(3)
+    (tmp_path / "compact_evidence.dsae").write_bytes(short)
+    (tmp_path / "meta.json").write_text(json.dumps({
+        "compact_evidence_path": "compact_evidence.dsae",
+        "compact_evidence_sha256": hashlib.sha256(short).hexdigest(),
+        "compact_evidence_token_count": 4,
+        "frame_token_count": 4,
+        "answer_token_count": 4,
+    }), encoding="utf-8")
+    report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
+    assert not report.ok
+    assert any("token count" in err for err in report.errors)

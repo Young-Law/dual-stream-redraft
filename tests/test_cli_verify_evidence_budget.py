@@ -7,3 +7,13 @@ def test_cli_verify_evidence_budget_json(tmp_path):
     proc = subprocess.run([sys.executable, "-m", "dualstream.cli", "verify-evidence-budget", "--artifact", str(tmp_path), "--profile", "DSA-CI-Lite", "--ci-mode", "pr", "--json"], text=True, capture_output=True)
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert json.loads(proc.stdout)["ok"] is True
+
+
+def test_documented_budget_verification_command_passes(tmp_path):
+    import subprocess, sys
+    run = tmp_path / "doc_budget"
+    run.mkdir()
+    (run / "compact_evidence.dsae").write_bytes(encode_compact_sequence([{"chosen_id": i, "topk_ids": [i,i+1,i+2], "topk_scores": [.7,.2,.1]} for i in range(10000)]))
+    proc = subprocess.run([sys.executable, "-m", "dualstream.cli", "verify-evidence-budget", "--artifact", str(run), "--profile", "DSA-CI-Lite", "--ci-mode", "pr", "--json"], text=True, capture_output=True)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert json.loads(proc.stdout)["ok"] is True

@@ -200,16 +200,17 @@ v2.9 adds:
 - rank-triggered adaptive evidence capture when the committed token falls outside the base pre-control top-K set;
 - a mechanical retention floor so summary-only or truncated artifacts fail verification.
 
-Generate both legacy frames and compact evidence:
+Generate both legacy frames and compact evidence for a short smoke run:
 
 ```bash
-python -m dualstream.cli generate --model gpt2 --prompt "Please review this helper for hidden unsafe behavior." --outdir runs/v29_smoke --max-new-tokens 32 --top-k 3 --evidence-profile DSA-CI-Lite --compact-evidence --adaptive-k --max-adaptive-k 5
+python -m dualstream.cli generate --model google/gemma-3-1b-it --prompt "Please review this helper for hidden unsafe behavior." --outdir runs/v29_smoke --max-new-tokens 32 --top-k 3 --evidence-profile DSA-CI-Lite --compact-evidence --adaptive-k --max-adaptive-k 5
 ```
 
-Verify a compact artifact directory:
+Budget conformance should be checked on a sufficiently long compact artifact so fixed headers are amortized. This deterministic fixture stays inside the CI-Lite ceiling and verifies successfully:
 
 ```bash
-python -m dualstream.cli verify-evidence-budget --artifact runs/v29_smoke --profile DSA-CI-Lite --ci-mode pr --json
+python -c "from pathlib import Path; from dualstream.compact_evidence import encode_compact_sequence; p=Path('runs/v29_budget'); p.mkdir(parents=True, exist_ok=True); rows=[{'chosen_id':i,'topk_ids':[i,i+1,i+2],'topk_scores':[0.7,0.2,0.1]} for i in range(10000)]; (p/'compact_evidence.dsae').write_bytes(encode_compact_sequence(rows, profile='DSA-CI-Lite'))"
+python -m dualstream.cli verify-evidence-budget --artifact runs/v29_budget --profile DSA-CI-Lite --ci-mode pr --json
 ```
 
 Available evidence profiles are `DSA-CI-Lite`, `DSA-CI-Standard`, `DSA-Deep`, and `DSA-Forensic`. `DSA-Forensic` is intended for incident replay and is rejected for default PR verification. This codebase does not implement DSA-P device attestation.

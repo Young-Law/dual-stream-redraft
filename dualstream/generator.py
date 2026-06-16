@@ -287,7 +287,14 @@ class DualStreamGenerator:
                 probs_full = self._softmax(logits)  # pre-sampling distribution
 
                 # Evidence top-K (pre-sampling; prior to filtering)
-                k = int(max(cfg.top_k, cfg.max_adaptive_k or cfg.top_k)) if cfg.compact_evidence and cfg.adaptive_k else int(cfg.top_k)
+                if cfg.compact_evidence:
+                    from .evidence_profile import get_evidence_profile
+                    profile = get_evidence_profile(cfg.evidence_profile)
+                    k = max(int(cfg.top_k), int(profile.base_k))
+                    if cfg.adaptive_k:
+                        k = max(k, int(cfg.max_adaptive_k or profile.max_adaptive_k))
+                else:
+                    k = int(cfg.top_k)
                 top_probs, top_ids = torch.topk(probs_full, k=k)
                 top_ids_list = [int(x) for x in top_ids.tolist()]
                 top_probs_list = [float(x) for x in top_probs.tolist()]
@@ -414,8 +421,6 @@ class DualStreamGenerator:
         fallback = None
         if outcome.outcome in {"FAIL","FALLBACK"}:
             fallback = FallbackRouter(max_retries=cfg.max_red_retries, strategy=cfg.fallback_strategy).route(retry_count=cfg.max_red_retries, reason=outcome.outcome, unchanged_retry_attempted=True)
-            if fallback.fallback_text:
-                answer_text = fallback.fallback_text
             frames[-1].fallback_state = fallback.action if frames else None
             frames[-1].fallback_reason = fallback.reason if frames else None
 
@@ -430,6 +435,8 @@ class DualStreamGenerator:
             "frames": frames,
             "frame_bytes": frame_bytes,
             "compact_evidence_bytes": compact_bytes,
+            "answer_token_ids": generated_ids,
+            "fallback_text": None if fallback is None else fallback.fallback_text,
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
             "model": self.model_name,
             "config": cfg,

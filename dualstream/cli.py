@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -85,10 +86,15 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
         for fb in result["frame_bytes"]:
             f.write(fb)
 
+    compact_bytes = result.get("compact_evidence_bytes")
+    frame_token_count = len(frames)
+    answer_token_count = len(result.get("answer_token_ids", [])) if result.get("answer_token_ids") is not None else frame_token_count
     meta = {
         "prompt_nonce": result["prompt_nonce"],
         "model": result["model"],
         "running_hash": result["running_hash"],
+        "answer_token_count": answer_token_count,
+        "frame_token_count": frame_token_count,
         "config": {
             "model": cfg.model,
             "max_new_tokens": cfg.max_new_tokens,
@@ -117,8 +123,17 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
             "chunk_token_capacity": getattr(cfg, "chunk_token_capacity", 256),
         },
     }
-    if result.get("compact_evidence_bytes") is not None:
-        compact_path.write_bytes(result["compact_evidence_bytes"])
+    if compact_bytes is not None:
+        compact_path.write_bytes(compact_bytes)
+        meta["compact_evidence_path"] = compact_path.name
+        meta["compact_evidence_sha256"] = hashlib.sha256(compact_bytes).hexdigest()
+        meta["compact_evidence_token_count"] = frame_token_count
+    if result.get("fallback_text"):
+        fallback_path = outdir / "fallback.txt"
+        fallback_path.write_text(result["fallback_text"], encoding="utf-8")
+        meta["fallback_path"] = fallback_path.name
+        meta["fallback_evidence_bound"] = False
+        meta["original_output_blocked"] = True
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     try:
@@ -135,7 +150,7 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
         "audit_path": audit_path.name,
         "meta_path": meta_path.name,
     }
-    if result.get("compact_evidence_bytes") is not None:
+    if compact_bytes is not None:
         paths["compact_evidence_path"] = compact_path.name
     return paths
 
@@ -182,6 +197,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
         chunk_token_capacity=getattr(args, "chunk_token_capacity", 256),
     )
 
+    if getattr(cfg, "compact_evidence", False):
+        from .evidence_profile import get_evidence_profile
+        profile = get_evidence_profile(cfg.evidence_profile)
+        if cfg.top_k < profile.base_k:
+            cfg.top_k = profile.base_k
+
     outdir = Path(args.outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -215,6 +236,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
                 "audit_path": f"{run_dir_name}/{paths['audit_path']}",
                 "meta_path": f"{run_dir_name}/{paths['meta_path']}",
             }
+            if "compact_evidence_path" in paths:
+                row["compact_evidence_path"] = f"{run_dir_name}/{paths['compact_evidence_path']}"
             manifest.write(json.dumps(row, ensure_ascii=False) + "\n")
             print(f"[{index}/{total}] wrote {Path(args.outdir) / run_dir_name}")
 
