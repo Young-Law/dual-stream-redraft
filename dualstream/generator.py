@@ -61,6 +61,11 @@ class GenerationConfig:
     max_red_retries: int = 1
     fallback_strategy: str = "canned_refusal"
     selective_retention: bool = True
+    evidence_profile: str = "DSA-CI-Lite"
+    compact_evidence: bool = False
+    adaptive_k: bool = False
+    max_adaptive_k: Optional[int] = None
+    chunk_token_capacity: int = 256
 
 
 class DualStreamGenerator:
@@ -282,7 +287,7 @@ class DualStreamGenerator:
                 probs_full = self._softmax(logits)  # pre-sampling distribution
 
                 # Evidence top-K (pre-sampling; prior to filtering)
-                k = int(cfg.top_k)
+                k = int(max(cfg.top_k, cfg.max_adaptive_k or cfg.top_k)) if cfg.compact_evidence and cfg.adaptive_k else int(cfg.top_k)
                 top_probs, top_ids = torch.topk(probs_full, k=k)
                 top_ids_list = [int(x) for x in top_ids.tolist()]
                 top_probs_list = [float(x) for x in top_probs.tolist()]
@@ -414,11 +419,17 @@ class DualStreamGenerator:
             frames[-1].fallback_state = fallback.action if frames else None
             frames[-1].fallback_reason = fallback.reason if frames else None
 
+        compact_bytes = None
+        if cfg.compact_evidence:
+            from .compact_evidence import encode_compact_sequence
+            compact_bytes = encode_compact_sequence(frames, profile=cfg.evidence_profile, sequence_id=prompt_nonce, chunk_token_capacity=cfg.chunk_token_capacity, adaptive_k=cfg.adaptive_k, max_adaptive_k=cfg.max_adaptive_k)
+
         return {
             "prompt_nonce": prompt_nonce,
             "answer": answer_text,
             "frames": frames,
             "frame_bytes": frame_bytes,
+            "compact_evidence_bytes": compact_bytes,
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
             "model": self.model_name,
             "config": cfg,

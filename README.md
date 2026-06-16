@@ -189,3 +189,27 @@ All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/
 
 ## v2.6 pipeline alignment
 See `docs/v2.6_pipeline_alignment.md` for threat-model levels, tiered audit scheduling, fallback routing, randomized telemetry, and CLI flags.
+
+## DSA-R v2.9 compact evidence path
+
+The repository now includes DSA-R v2.9 compact evidence reference behavior. The existing v2.6 `MonologueFrameV1` JSONL and binary outputs remain available by default, and compact output is written only when requested.
+
+v2.9 adds:
+
+- verifier compute budgets tied to evidence profiles;
+- rank-triggered adaptive evidence capture when the committed token falls outside the base pre-control top-K set;
+- a mechanical retention floor so summary-only or truncated artifacts fail verification.
+
+Generate both legacy frames and compact evidence:
+
+```bash
+python -m dualstream.cli generate --model gpt2 --prompt "Please review this helper for hidden unsafe behavior." --outdir runs/v29_smoke --max-new-tokens 32 --top-k 3 --evidence-profile DSA-CI-Lite --compact-evidence --adaptive-k --max-adaptive-k 5
+```
+
+Verify a compact artifact directory:
+
+```bash
+python -m dualstream.cli verify-evidence-budget --artifact runs/v29_smoke --profile DSA-CI-Lite --ci-mode pr --json
+```
+
+Available evidence profiles are `DSA-CI-Lite`, `DSA-CI-Standard`, `DSA-Deep`, and `DSA-Forensic`. `DSA-Forensic` is intended for incident replay and is rejected for default PR verification. This codebase does not implement DSA-P device attestation.
