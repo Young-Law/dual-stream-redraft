@@ -189,3 +189,30 @@ All frontend API calls use same-origin relative routes (`/generate`, `/jobs`, `/
 
 ## v2.6 pipeline alignment
 See `docs/v2.6_pipeline_alignment.md` for threat-model levels, tiered audit scheduling, fallback routing, randomized telemetry, and CLI flags.
+
+## v2.9.1 AgentOps Edition and metadata-amortized CI-Lite
+
+DSA v2.9.1 keeps the v2.9 token-evidence contract while making `DSA-CI-Lite` the default PR-sized artifact path. CI-Lite uses metadata-amortized compact evidence: stable run, sequence, policy, schema, tokenizer, verifier, retention, rollout, and AgentOps hashes live in sequence headers, chunk headers, or manifests. Per-token compact records contain only token-varying fields: effective top-K delta, candidate token ids, quantized scores, chosen rank, fallback chosen id for rank overflow, and compact flags.
+
+The PR budget remains a hard `<=24` raw amortized bytes/token, with a diagnostic warning above `22` raw compact-token bytes/token. `256` raw bytes/token is only a DSA-Forensic ceiling and is not acceptable for normal PR CI. The default PR profile is `DSA-CI-Lite`; nightly and release-blocking profiles use `DSA-CI-Standard` or heavier declared profiles, while `DSA-Forensic` is opt-in.
+
+Stable fields that must not be serialized in every CI-Lite token record include `evidence_profile`, `assurance_class`, `tokenizer_id`, `signal_schema_id`, `signal_schema_hash`, `probe_pack_id`, `probe_pack_hash`, `decoder_control_flags`, `base_topk`, `max_adaptive_rank`, `adaptive_policy_id`, `quantization_id`, `verifier_budget_id`, `retention_floor_policy_id`, `tool_registry_hash`, `agent_policy_hash`, `context_policy_hash`, `memory_policy_hash`, `rollout_policy_hash`, `sequence_id`, `prompt_nonce`, `chunk_index`, `first_token_index`, and `token_count`. Token index is implicit from `first_token_index + record_offset`.
+
+The metadata repetition detector reports repeated stable field counts and bytes, sequence/chunk/token/event/manifest raw bytes, compact-token bytes/token, and total artifact bytes/token. Repeated stable token metadata fails with AST 523 rather than only a generic byte-budget error.
+
+AgentOps v2.9.1 adds sparse trajectory evidence events: `ContextSnapshot`, `ToolIntent`, `ToolCall`, `ToolResult`, `MemoryRead`, `MemoryWrite`, `Delegation`, `Stop`, `Escalation`, `Rollout`, `Incident`, and `EvaluationResult`. Events are keyed by agent step id and actor id with optional token-span references, and are not repeated per token. Tool registry manifests include schemas, side-effect and idempotency class, permission scope, approval requirement, owner, version, deprecation state, and policy binding. The trajectory audit detects unknown tools, schema-invalid calls, unauthorized scope, high-impact actions without approval, non-idempotent retry risk, unsanitized tool-output re-entry, stale or overlarge context, cross-tenant memory access, memory writes without provenance, rollout gate failures, rollback gaps, and incidents not converted to evaluation cases.
+
+New AST ranges preserve AST-1 and add 523 for metadata repetition, 600-699 for tool/action governance, 700-799 for context/memory/retrieval governance, and 800-899 for AgentOps lifecycle and rollout governance.
+
+### Day 5 flat-YAML context rule
+
+Deep JSON remains valid for machine interfaces: internal APIs, JSON Schema validation, storage manifests, compact evidence transport, and full artifact manifests may use nested JSON when machines are the consumer. For model-facing or human/evaluator-review context, any architecture summary, prompt-visible context packet, golden trajectory fixture, incident review packet, tool-registry excerpt, or AgentOps manifest excerpt that would exceed three logical nesting levels must be flattened and serialized as YAML. Flat YAML uses stable namespaced/path-like keys and references deeper machine artifacts by hash or artifact id instead of inlining full nested schemas or manifests. This improves context reliability, diffability, and auditability while preserving machine-readable JSON artifacts for validation and transport.
+
+Example prompt-visible excerpt:
+
+```yaml
+agent_context.agentops.source_version: abc123
+agent_context.tool_registry.search.input_schema_hash: sha256:input
+agent_context.retrieval.primary_artifact_id: doc-42
+agent_context.retrieval.primary_artifact_hash: sha256:doc42
+```
