@@ -214,3 +214,23 @@ python -m dualstream.cli verify-evidence-budget --artifact runs/v29_budget --pro
 ```
 
 Available evidence profiles are `DSA-CI-Lite`, `DSA-CI-Standard`, `DSA-Deep`, and `DSA-Forensic`. `DSA-Forensic` is intended for incident replay and is rejected for default PR verification. This codebase does not implement DSA-P device attestation.
+
+## DSA-R v2.9 compact evidence conformance
+
+This repository implements DSA-R v2.9 reference behavior for compact evidence verification. It does not implement DSA-P production device or enclave attestation; DSA-P claims require real device/enclave attestation, which is outside this code path.
+
+For CI-Lite, compact evidence uses base K=3 and, when adaptive K is enabled without an explicit `--max-adaptive-k`, widens by the chosen token's rank through rank 10. The trigger is rank-based rather than entropy-based. `DSA-Forensic` is opt-in for incident replay and is rejected for default PR or normal CI verification.
+
+Short compact artifacts are structural smoke tests: integrity, metadata binding, reconstruction, sparse-span validation, and the local retention floor still run, but profile byte-budget conformance is reported as `not_evaluated_short_fixture` until the profile's 10,000-token benchmark floor is reached. Use canonical 10,000-token fixtures for paper budget conformance (CI-Lite <=24 raw B/token; CI-Standard <=48 raw B/token). Passing `--strict-profile-budget` applies the byte ceiling to short fixtures as well.
+
+Verifier resource checks enforce elapsed reconstruction time and traced allocation by default. Passing `--enforce-rss-budget` also enforces the profile peak RSS budget (CI-Lite 512 MiB; CI-Standard 1 GiB). Verification JSON includes p50/p95-compatible timing fields, RSS limits, reconstructed token/chunk/span/adaptive counts, retention-floor bytes, bytes/token, `verification_outcome`, `failure_codes`, and `errors`.
+
+AST-1 v2.9 adds AST 521 (`retention-floor violation`) and AST 522 (`verifier resource budget exceeded`) so verifier failures can be consumed programmatically.
+
+Runnable examples:
+
+```bash
+python -m dualstream.cli generate --model google/gemma-3-1b-it --prompt "Please review this helper for hidden unsafe behavior." --outdir runs/v29_smoke --max-new-tokens 32 --top-k 3 --evidence-profile DSA-CI-Lite --compact-evidence --adaptive-k
+python -m dualstream.cli verify-evidence-budget --artifact runs/v29_smoke --profile DSA-CI-Lite --ci-mode pr --json
+python -m dualstream.cli verify-evidence-budget --artifact runs/v29_smoke --profile DSA-CI-Lite --ci-mode pr --strict-profile-budget --enforce-rss-budget --json
+```

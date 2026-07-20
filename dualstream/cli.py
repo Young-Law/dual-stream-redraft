@@ -300,7 +300,7 @@ def cmd_kaggle_submit(args: argparse.Namespace) -> int:
 
 def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
     from .verifier import verify_evidence_artifact
-    report = verify_evidence_artifact(args.artifact, profile=args.profile, ci_mode=args.ci_mode)
+    report = verify_evidence_artifact(args.artifact, profile=args.profile, ci_mode=args.ci_mode, strict_profile_budget=args.strict_profile_budget, enforce_rss_budget=args.enforce_rss_budget)
     payload = report.to_dict()
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -369,6 +369,8 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--profile", required=True, choices=["DSA-CI-Lite", "DSA-CI-Standard", "DSA-Deep", "DSA-Forensic"])
     vb.add_argument("--ci-mode", required=True)
     vb.add_argument("--json", action="store_true")
+    vb.add_argument("--strict-profile-budget", action="store_true")
+    vb.add_argument("--enforce-rss-budget", action="store_true")
     vb.set_defaults(func=cmd_verify_evidence_budget)
 
     def add_solver_flags(parser: argparse.ArgumentParser) -> None:
