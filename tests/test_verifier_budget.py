@@ -37,3 +37,37 @@ def test_verifier_compute_budget_failure_is_enforced(tmp_path, monkeypatch):
     report = verifier.verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
     assert not report.ok
     assert any("exceeds profile budget" in err for err in report.errors)
+
+
+def _over_budget_rows(n):
+    return [{"chosen_id": i + 100000, "topk_ids": [i, i+1, i+2], "topk_scores": [.7,.2,.1]} for i in range(n)]
+
+
+def test_strict_short_fixture_over_budget_reports_budget_fail(tmp_path):
+    (tmp_path / "compact_evidence.dsae").write_bytes(encode_compact_sequence(_over_budget_rows(4), adaptive_k=False))
+    report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr", strict_profile_budget=True)
+    assert not report.ok
+    assert report.budget_status == "fail"
+    assert "profile_byte_budget_exceeded" in report.failure_codes
+
+
+def test_non_strict_short_fixture_reports_not_evaluated_short_fixture(tmp_path):
+    (tmp_path / "compact_evidence.dsae").write_bytes(encode_compact_sequence(_over_budget_rows(4), adaptive_k=False))
+    report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
+    assert report.ok, report.errors
+    assert report.budget_status == "not_evaluated_short_fixture"
+
+
+def test_canonical_over_budget_reports_budget_fail(tmp_path):
+    (tmp_path / "compact_evidence.dsae").write_bytes(encode_compact_sequence(_over_budget_rows(10000), adaptive_k=False))
+    report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
+    assert not report.ok
+    assert report.budget_status == "fail"
+    assert "profile_byte_budget_exceeded" in report.failure_codes
+
+
+def test_structural_failure_budget_status(tmp_path):
+    (tmp_path / "compact_evidence.dsae").write_bytes(b"not compact")
+    report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
+    assert not report.ok
+    assert report.budget_status == "not_evaluated_due_to_structural_failure"

@@ -40,8 +40,11 @@ class VerificationReport:
     adaptive_records_reconstructed: int
     budget_status: str
     verification_outcome: str
-    failure_codes: list[int]
+    failure_codes: list[int | str]
     errors: list[str]
+    strict_profile_budget: bool = False
+    minimum_budget_token_count: int = 0
+    ceiling_bytes_per_token: int = 0
 
     @property
     def peak_rss_bytes(self): return self.verifier_peak_rss_bytes
@@ -89,11 +92,22 @@ def _enforce_metadata_binding(meta: dict[str, object], artifact_path: Path, deco
         if meta.get(key) is not None and int(meta[key]) != actual_tokens: raise ValueError(msg)
 
 
+PROFILE_BYTE_BUDGET_EXCEEDED = "profile_byte_budget_exceeded"
+
+
+def _evaluate_profile_budget(summary, prof, strict_profile_budget: bool) -> tuple[str, list[str], list[int | str]]:
+    if not strict_profile_budget and summary.token_count < prof.minimum_budget_token_count:
+        return "not_evaluated_short_fixture", [], []
+    if summary.raw_bytes_per_token > summary.ceiling_bytes_per_token:
+        return "fail", [f"raw bytes/token {summary.raw_bytes_per_token:.3f} exceeds ceiling {summary.ceiling_bytes_per_token}"], [PROFILE_BYTE_BUDGET_EXCEEDED]
+    return "pass", [], []
+
+
 def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False) -> VerificationReport:
-    errors: list[str] = []; failure_codes: list[int] = []
+    errors: list[str] = []; failure_codes: list[int | str] = []
     start = time.perf_counter(); tracemalloc.start()
     prof = get_evidence_profile(profile)
-    token_count=adaptive_count=max_eff=rank_overflow=chunks=spans=0; raw_bpt=0.0; compressed_bpt=None; retained=minimum=margin=0; budget_status="not_evaluated"
+    token_count=adaptive_count=max_eff=rank_overflow=chunks=spans=0; raw_bpt=0.0; compressed_bpt=None; retained=minimum=margin=0; budget_status="not_evaluated_disabled" if not enforce_budget else "not_evaluated_due_to_structural_failure"
     try:
         assert_profile_ci_mode(prof, ci_mode)
         artifact_path = find_compact_artifact(path); data = artifact_path.read_bytes(); decoded = decode_compact_sequence(data)
@@ -110,10 +124,8 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         summary = compute_evidence_budget_summary(data, prof.profile_id.value); raw_bpt=summary.raw_bytes_per_token; compressed_bpt=summary.compressed_bytes_per_token; retained=summary.retained_reconstructable_bytes; minimum=summary.minimum_reconstructable_bytes; margin=summary.retention_floor_margin
         assert_retention_floor(summary)
         if enforce_budget:
-            if strict_profile_budget or token_count >= prof.minimum_budget_token_count:
-                assert_evidence_budget(summary); budget_status="pass" if summary.raw_bytes_per_token <= summary.ceiling_bytes_per_token else "fail"
-            else:
-                budget_status="not_evaluated_short_fixture"
+            budget_status, budget_errors, budget_codes = _evaluate_profile_budget(summary, prof, strict_profile_budget)
+            errors.extend(budget_errors); failure_codes.extend(budget_codes)
             if prof.adaptive_record_fraction_limit is not None and token_count and adaptive_count/token_count > prof.adaptive_record_fraction_limit:
                 raise ValueError("adaptive record fraction exceeds profile limit")
     except Exception as exc:
@@ -132,4 +144,4 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
     ok=not errors
     outcome="pass" if ok else "fail"
     tps = token_count/elapsed if elapsed > 0 else 0.0
-    return VerificationReport(ok, prof.profile_id.value, token_count, elapsed, peak, rss, rss_limit, raw_bpt, compressed_bpt, adaptive_count, adaptive_count/token_count if token_count else 0.0, max_eff, rank_overflow, retained, minimum, margin, elapsed, elapsed, elapsed, tps, chunks, spans, adaptive_count, budget_status, outcome, sorted(set(failure_codes)), errors)
+    return VerificationReport(ok, prof.profile_id.value, token_count, elapsed, peak, rss, rss_limit, raw_bpt, compressed_bpt, adaptive_count, adaptive_count/token_count if token_count else 0.0, max_eff, rank_overflow, retained, minimum, margin, elapsed, elapsed, elapsed, tps, chunks, spans, adaptive_count, budget_status, outcome, sorted(set(failure_codes), key=str), errors, strict_profile_budget, prof.minimum_budget_token_count, prof.ceiling_bytes_per_token)

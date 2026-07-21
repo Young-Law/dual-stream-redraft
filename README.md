@@ -234,3 +234,15 @@ python -m dualstream.cli generate --model google/gemma-3-1b-it --prompt "Please 
 python -m dualstream.cli verify-evidence-budget --artifact runs/v29_smoke --profile DSA-CI-Lite --ci-mode pr --json
 python -m dualstream.cli verify-evidence-budget --artifact runs/v29_smoke --profile DSA-CI-Lite --ci-mode pr --strict-profile-budget --enforce-rss-budget --json
 ```
+
+### Compact evidence wire versions and budget status
+
+Compact evidence decoding now dispatches by wire version before interpreting layout-specific fields. Version `0x0301` is the legacy V3.1 layout with one-byte `profile_len` and one-byte `meta_len` header fields and per-token `chosen_id` storage. Version `0x0302` is the current layout with a two-byte metadata length field and compact chosen-rank records with fallback `chosen_id` only when required. The encoder emits `0x0302`; the decoder preserves read compatibility for `0x0301` artifacts and fails unsupported or malformed layouts with explicit version/header/layout errors.
+
+`verify-evidence-budget --json` reports a stable `budget_status`:
+
+- `pass`: profile byte budget was evaluated and passed.
+- `fail`: profile byte budget was evaluated and exceeded; strict short-fixture failures also use this status.
+- `not_evaluated_short_fixture`: the artifact was shorter than the profile's canonical token-count floor and `--strict-profile-budget` was not set; structural, integrity, metadata, reconstruction, and retention-floor checks still ran.
+- `not_evaluated_disabled`: profile budget checks were disabled by the caller.
+- `not_evaluated_due_to_structural_failure`: decode, metadata binding, or structural verification failed before profile byte-budget evaluation could be computed.

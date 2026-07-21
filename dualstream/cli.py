@@ -305,9 +305,12 @@ def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     elif report.ok:
-        print(f"PASS {report.profile_id}: {report.token_count} tokens, {report.raw_bytes_per_token:.3f} bytes/token")
+        suffix = "" if report.budget_status == "pass" else f" (budget_status={report.budget_status})"
+        print(f"PASS {report.profile_id}: {report.token_count} tokens, {report.raw_bytes_per_token:.3f} bytes/token{suffix}")
     else:
-        print("FAIL " + "; ".join(report.errors))
+        status = f"budget_status={report.budget_status}"
+        detail = "; ".join(report.errors) if report.errors else report.verification_outcome
+        print(f"FAIL {status}: {detail}")
     return 0 if report.ok else 2
 
 def build_parser() -> argparse.ArgumentParser:
