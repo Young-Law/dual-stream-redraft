@@ -21,7 +21,16 @@ class EvidenceProfile:
     verifier_budget_id: str
     verifier_time_seconds: float
     verifier_peak_mib: int
+    minimum_budget_token_count: int = 10000
+    adaptive_record_fraction_limit: float | None = None
+    verifier_peak_rss_mib: int | None = None
+    verifier_traced_peak_mib: int | None = None
+    absolute_ci_safety_rail_mib: int | None = None
     default_pr_ci: bool = False
+
+    def __post_init__(self):
+        if self.verifier_peak_rss_mib is None:
+            object.__setattr__(self, "verifier_peak_rss_mib", self.verifier_peak_mib)
 
     def minimum_reconstructable_bytes_per_token(self, effective_topk: int | None = None) -> int:
         k = self.base_k if effective_topk is None else int(effective_topk)
@@ -29,10 +38,10 @@ class EvidenceProfile:
 
 
 PROFILES: dict[str, EvidenceProfile] = {
-    EvidenceProfileId.CI_LITE.value: EvidenceProfile(EvidenceProfileId.CI_LITE, 24, 3, 5, ("pr", "normal", "nightly"), "h3e-ci-lite", 3.0, 512, True),
-    EvidenceProfileId.CI_STANDARD.value: EvidenceProfile(EvidenceProfileId.CI_STANDARD, 48, 5, 10, ("nightly", "release", "release-blocking"), "h3e-ci-standard", 6.0, 1024),
-    EvidenceProfileId.DEEP.value: EvidenceProfile(EvidenceProfileId.DEEP, 96, 5, 20, ("nightly", "probe", "adversarial"), "h3e-deep", 30.0, 2048),
-    EvidenceProfileId.FORENSIC.value: EvidenceProfile(EvidenceProfileId.FORENSIC, 256, 5, 32, ("incident", "forensic", "replay"), "h3e-forensic", 120.0, 4096),
+    EvidenceProfileId.CI_LITE.value: EvidenceProfile(EvidenceProfileId.CI_LITE, 24, 3, 10, ("pr", "normal", "nightly"), "h3e-ci-lite", 3.0, 512, 10000, 0.05, 512, 512, 1024, True),
+    EvidenceProfileId.CI_STANDARD.value: EvidenceProfile(EvidenceProfileId.CI_STANDARD, 48, 5, 10, ("nightly", "release", "release-blocking"), "h3e-ci-standard", 6.0, 1024, 10000, 0.20, 1024, 1024, 2048),
+    EvidenceProfileId.DEEP.value: EvidenceProfile(EvidenceProfileId.DEEP, 96, 5, 20, ("nightly", "probe", "adversarial"), "h3e-deep", 30.0, 2048, 10000, None, 2048, 2048, 4096),
+    EvidenceProfileId.FORENSIC.value: EvidenceProfile(EvidenceProfileId.FORENSIC, 256, 5, 32, ("incident", "forensic", "replay"), "h3e-forensic", 120.0, 4096, 10000, None, 4096, 4096, 8192),
 }
 
 

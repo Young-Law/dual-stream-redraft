@@ -300,14 +300,17 @@ def cmd_kaggle_submit(args: argparse.Namespace) -> int:
 
 def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
     from .verifier import verify_evidence_artifact
-    report = verify_evidence_artifact(args.artifact, profile=args.profile, ci_mode=args.ci_mode)
+    report = verify_evidence_artifact(args.artifact, profile=args.profile, ci_mode=args.ci_mode, strict_profile_budget=args.strict_profile_budget, enforce_rss_budget=args.enforce_rss_budget)
     payload = report.to_dict()
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     elif report.ok:
-        print(f"PASS {report.profile_id}: {report.token_count} tokens, {report.raw_bytes_per_token:.3f} bytes/token")
+        suffix = "" if report.budget_status == "pass" else f" (budget_status={report.budget_status})"
+        print(f"PASS {report.profile_id}: {report.token_count} tokens, {report.raw_bytes_per_token:.3f} bytes/token{suffix}")
     else:
-        print("FAIL " + "; ".join(report.errors))
+        status = f"budget_status={report.budget_status}"
+        detail = "; ".join(report.errors) if report.errors else report.verification_outcome
+        print(f"FAIL {status}: {detail}")
     return 0 if report.ok else 2
 
 def build_parser() -> argparse.ArgumentParser:
@@ -369,6 +372,8 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--profile", required=True, choices=["DSA-CI-Lite", "DSA-CI-Standard", "DSA-Deep", "DSA-Forensic"])
     vb.add_argument("--ci-mode", required=True)
     vb.add_argument("--json", action="store_true")
+    vb.add_argument("--strict-profile-budget", action="store_true")
+    vb.add_argument("--enforce-rss-budget", action="store_true")
     vb.set_defaults(func=cmd_verify_evidence_budget)
 
     def add_solver_flags(parser: argparse.ArgumentParser) -> None:
