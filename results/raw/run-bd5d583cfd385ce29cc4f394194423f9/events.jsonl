@@ -1,0 +1,4 @@
+{"artifact": "DSA-CI-Lite.dsae", "condition": "DSA-CI-Lite", "sha256": "40e824dccf2ab1432fb878ca4591670b56988b9d7b3dc53655824341629d84bf"}
+{"artifact": "DSA-CI-Lite-adaptive.dsae", "condition": "DSA-CI-Lite-adaptive", "sha256": "d0a851b9c0c3247a3b5aa82e3c9eb18aa3892eeb182ed0dc9facbddf942d6d02"}
+{"artifact": "DSA-CI-Standard.dsae", "condition": "DSA-CI-Standard", "sha256": "747e645755c82a80bc3b27958085575bdb0be9a5e6a3d057f621f70b659e73a1"}
+{"artifact": "DSA-Deep.dsae", "condition": "DSA-Deep", "sha256": "da5d707dd479e6a933482d5172b10ecc71b890e7c25d36762effeb71f3623a51"}

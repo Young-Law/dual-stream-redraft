@@ -1,0 +1,23 @@
+{
+  "DSA-CI-Lite-adaptive.dsae": "d0a851b9c0c3247a3b5aa82e3c9eb18aa3892eeb182ed0dc9facbddf942d6d02",
+  "DSA-CI-Lite.dsae": "40e824dccf2ab1432fb878ca4591670b56988b9d7b3dc53655824341629d84bf",
+  "DSA-CI-Standard.dsae": "747e645755c82a80bc3b27958085575bdb0be9a5e6a3d057f621f70b659e73a1",
+  "DSA-Deep.dsae": "da5d707dd479e6a933482d5172b10ecc71b890e7c25d36762effeb71f3623a51",
+  "corrupt-DSA-CI-Lite-adaptive-invalid_hash_byte_flip.dsae": "405f96af2adbc1586af93bd29231c8ff1b575407ae49e3289fba0aeed488f672",
+  "corrupt-DSA-CI-Lite-adaptive-invalid_schema_magic.dsae": "4d3a26da48b65528476a71a69e7b22e5437b643b557db98f09b0284c57e9f467",
+  "corrupt-DSA-CI-Lite-adaptive-truncated_final_chunk.dsae": "2c77000de908af7316e55fbe0e7fc7fd4c31adb0664120baac9a9eeb6d97fc89",
+  "corrupt-DSA-CI-Lite-invalid_hash_byte_flip.dsae": "9d3afb87ec8072d103820395bb73289e0ca8203124756e332e0bee5bd8507be6",
+  "corrupt-DSA-CI-Lite-invalid_schema_magic.dsae": "e013868345312845a99844afd2d93c437212451aa90ea1152eae2bca897e8443",
+  "corrupt-DSA-CI-Lite-truncated_final_chunk.dsae": "0e0394aa339992f58b3a9f3f5e845b73c3850bb557d3c875607e0725f6603fef",
+  "corrupt-DSA-CI-Standard-invalid_hash_byte_flip.dsae": "28df30a7363a9ca9f04c19e87a584b7b8f992cc00052f5a8e486a173b09cd36d",
+  "corrupt-DSA-CI-Standard-invalid_schema_magic.dsae": "0b27b4af36cc6974aab86d8188fdc886dc0c14c91a9035c30b605a88b442a472",
+  "corrupt-DSA-CI-Standard-truncated_final_chunk.dsae": "9c6a21eecb01d3a2beb67d7c7f329ef1c97c8e55462f0c6bc6ae8b4c3b869e0d",
+  "corrupt-DSA-Deep-invalid_hash_byte_flip.dsae": "3c2615fed4354dabf4b17872c245c798bf04d8c026c1a2526bd1001f4d52274d",
+  "corrupt-DSA-Deep-invalid_schema_magic.dsae": "c962d8b19eaa6cee1e4c45e68191311ce79f18e0c7999768ad3f4d2a524465b2",
+  "corrupt-DSA-Deep-truncated_final_chunk.dsae": "6766fe1347b777682d26de6753848d12dd362bd46ca8500a295fa7db6c6a9113",
+  "environment.json": "6307df71e1751341c9b56d523d8a9c0fd3660e6394e18cbc89cc9ea5c8e86301",
+  "events.jsonl": "c7a00bde0e8c45d5cd297606cdc43a220e37d91e24812d34cb78b1efd3bf2cd3",
+  "failures.jsonl": "103454d8e11a535fad927f3dfe6cdf40fc2162174bdde2f71f7ede3daff247f1",
+  "metrics.json": "a101ecb55659d10965991c5c00d5d494598c1e0a4bdc2f429afa735935889db4",
+  "run_manifest.json": "ea28c3938fb3a9b563f0d8a4c84a1208d2ab21b66374267f2a9f181d2c3a022f"
+}

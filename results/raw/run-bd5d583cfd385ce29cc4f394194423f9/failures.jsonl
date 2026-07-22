@@ -1,0 +1,12 @@
+{"condition": "DSA-CI-Lite", "corruption": "truncated_final_chunk", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Lite", "corruption": "invalid_schema_magic", "errors": ["compact evidence schema mismatch"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Lite", "corruption": "invalid_hash_byte_flip", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Lite-adaptive", "corruption": "truncated_final_chunk", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Lite-adaptive", "corruption": "invalid_schema_magic", "errors": ["compact evidence schema mismatch"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Lite-adaptive", "corruption": "invalid_hash_byte_flip", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Standard", "corruption": "truncated_final_chunk", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Standard", "corruption": "invalid_schema_magic", "errors": ["compact evidence schema mismatch"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-CI-Standard", "corruption": "invalid_hash_byte_flip", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-Deep", "corruption": "truncated_final_chunk", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-Deep", "corruption": "invalid_schema_magic", "errors": ["compact evidence schema mismatch"], "expected": "reject", "observed": "reject"}
+{"condition": "DSA-Deep", "corruption": "invalid_hash_byte_flip", "errors": ["compact chunk integrity check failed"], "expected": "reject", "observed": "reject"}

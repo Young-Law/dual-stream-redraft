@@ -1,0 +1,5 @@
+{
+  "platform": "Linux-6.12.13-x86_64-with-glibc2.39",
+  "python": "3.14.4 (main, May  1 2026, 05:51:55) [GCC 13.3.0]",
+  "cwd": "/workspace/dual-stream-redraft"
+}

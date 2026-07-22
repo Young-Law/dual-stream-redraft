@@ -1,0 +1,1 @@
+{"schema_id":"dsa-v2.10-ast-blocked","spec_version":"v2.10-blocked-no-authoritative-source","events":["schema_mismatch","retention_floor_violation","verifier_resource_budget_exceeded"]}

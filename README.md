@@ -1,3 +1,26 @@
+# Dual-Stream Architecture reference implementation
+
+This repository contains a Python reference implementation for Dual-Stream Architecture evidence capture, compact evidence serialization, verification, ARC sidecar artifacts, and now reproducible experiment scaffolding.
+
+## Version status
+
+No authoritative DSA v2.10 manuscript, schema, or changelog is present in this repository or was supplied in the current session. The implementation must therefore be treated as a partial v2.10 alignment effort over an existing v2.9-compatible compact evidence implementation, not as a v2.10-conformant implementation. See `docs/v2.10_gap_analysis.md` and `docs/v2.10_conformance_matrix.md`.
+
+## Common commands
+
+```bash
+python -m pytest
+python -m dualstream.cli experiment validate-protocol --protocol experiments/protocols/dsa_v2_10_protocol.yaml
+python -m dualstream.cli experiment list
+python -m dualstream.cli experiment run --protocol experiments/protocols/dsa_v2_10_protocol.yaml --experiment exp01_conformance
+python -m dualstream.cli experiment verify-hashes --run-dir results/raw/<run_id>
+python -m dualstream.cli experiment summarize
+python -m dualstream.cli experiment tables
+```
+
+## Scientific status
+
+The repository can execute an initial systems conformance and overhead experiment on synthetic token streams. These results concern implementation validity only. They do not demonstrate deception detection, inner-alignment detection, hidden-objective detection, or signal validity.
 # Dual-Stream Architecture (DSA) — reference implementation
 
 This repository contains a software reference for token-level DSA evidence frames and an ARC-DSA sidecar benchmark path.

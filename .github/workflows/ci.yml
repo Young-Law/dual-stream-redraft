@@ -1,0 +1,19 @@
+name: CI
+on:
+  pull_request:
+  push:
+  schedule:
+    - cron: '0 3 * * 0'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e . pytest
+      - run: python -m pytest
+      - run: python -m dualstream.cli experiment validate-protocol --protocol experiments/protocols/dsa_v2_10_protocol.yaml
+      - run: python -m dualstream.cli experiment run --protocol experiments/protocols/dsa_v2_10_protocol.yaml --experiment exp01_conformance --token-count 32 --repetitions 4
+      - run: python -m dualstream.cli experiment summarize

@@ -1,0 +1,37 @@
+{
+  "benchmark_id": "synthetic-controlled-replay",
+  "benchmark_version": "1",
+  "command": "/workspace/dual-stream-redraft/dualstream/cli.py experiment run --protocol experiments/protocols/dsa_v2_10_protocol.yaml --experiment exp01_conformance --token-count 64 --repetitions 20",
+  "completed_at": "2026-07-22T14:46:49Z",
+  "decoding_configuration": {
+    "source": "deterministic synthetic token replay",
+    "temperature": 0.0
+  },
+  "dependency_versions": {
+    "python": "3.14.4"
+  },
+  "evidence_profile": "multiple",
+  "exit_status": 0,
+  "experiment_id": "exp01_conformance",
+  "git_commit": "78e45bd41209209875b1983c5249c86b65d5bdcd",
+  "hardware": "x86_64",
+  "implementation_version": "0.1.0-v2.10-partial",
+  "model_hash_or_revision": "not_applicable",
+  "model_id": "synthetic-token-stream",
+  "operating_system": "Linux-6.12.13-x86_64-with-glibc2.39",
+  "probe_pack_hash": "140bedbf9c3f6d56a9846d2ba7088798683f4da0c248231336e6a05679e4fdfe",
+  "probe_pack_id": "none",
+  "protocol_id": "dsa-v2-10-partial-systems-protocol-2026-07-22",
+  "retention_policy": "v2.9-local-reconstructable-floor",
+  "run_id": "run-bd5d583cfd385ce29cc4f394194423f9",
+  "runtime_version": "3.14.4 (main, May  1 2026, 05:51:55) [GCC 13.3.0]",
+  "schema_hash": "computed-from-existing-implementation-not-authoritative-v2.10",
+  "schema_id": "compact-evidence-v0x0302-v2.9-compatible",
+  "seed": 20260722,
+  "split": "synthetic_conformance",
+  "started_at": "2026-07-22T14:46:49Z",
+  "tokenizer_hash_or_revision": "synthetic-v1",
+  "tokenizer_id": "synthetic-tokenizer-v1",
+  "verifier_budget": "existing-profile-budgets",
+  "working_tree_status": "M dualstream/cli.py\n?? configs/\n?? dualstream/__pycache__/\n?? dualstream/experiment.py\n?? experiments/\n?? results/\n?? tests/__pycache__/\n?? tests/test_experiment_framework.py"
+}

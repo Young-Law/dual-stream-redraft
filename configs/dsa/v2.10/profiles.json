@@ -1,0 +1,10 @@
+{
+  "spec_version": "v2.10-blocked-no-authoritative-source",
+  "source_status": "No authoritative v2.10 profile constants were supplied or found; values mirror the existing v2.9-compatible implementation for noncontroversial experimental infrastructure only.",
+  "profiles": [
+    {"profile_id":"DSA-CI-Lite","ceiling_bytes_per_token":24,"base_k":3,"max_adaptive_k":10,"ci_modes":["pr","normal","nightly"],"verifier_budget_id":"h3e-ci-lite","verifier_time_seconds":3.0,"verifier_peak_mib":512,"minimum_budget_token_count":10000,"adaptive_record_fraction_limit":0.05,"verifier_peak_rss_mib":512,"verifier_traced_peak_mib":512,"absolute_ci_safety_rail_mib":1024,"default_pr_ci":true},
+    {"profile_id":"DSA-CI-Standard","ceiling_bytes_per_token":48,"base_k":5,"max_adaptive_k":10,"ci_modes":["nightly","release","release-blocking"],"verifier_budget_id":"h3e-ci-standard","verifier_time_seconds":6.0,"verifier_peak_mib":1024,"minimum_budget_token_count":10000,"adaptive_record_fraction_limit":0.20,"verifier_peak_rss_mib":1024,"verifier_traced_peak_mib":1024,"absolute_ci_safety_rail_mib":2048,"default_pr_ci":false},
+    {"profile_id":"DSA-Deep","ceiling_bytes_per_token":96,"base_k":5,"max_adaptive_k":20,"ci_modes":["nightly","probe","adversarial"],"verifier_budget_id":"h3e-deep","verifier_time_seconds":30.0,"verifier_peak_mib":2048,"minimum_budget_token_count":10000,"adaptive_record_fraction_limit":null,"verifier_peak_rss_mib":2048,"verifier_traced_peak_mib":2048,"absolute_ci_safety_rail_mib":4096,"default_pr_ci":false},
+    {"profile_id":"DSA-Forensic","ceiling_bytes_per_token":256,"base_k":5,"max_adaptive_k":32,"ci_modes":["incident","forensic","replay"],"verifier_budget_id":"h3e-forensic","verifier_time_seconds":120.0,"verifier_peak_mib":4096,"minimum_budget_token_count":10000,"adaptive_record_fraction_limit":null,"verifier_peak_rss_mib":4096,"verifier_traced_peak_mib":4096,"absolute_ci_safety_rail_mib":8192,"default_pr_ci":false}
+  ]
+}

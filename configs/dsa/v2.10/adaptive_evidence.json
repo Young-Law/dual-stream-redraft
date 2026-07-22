@@ -1,0 +1,1 @@
+{"spec_version":"v2.10-blocked-no-authoritative-source","policies":[{"policy_id":"rank-triggered-base-k-to-profile-max","description":"Existing adaptive K extends retention until the chosen token rank is included, capped by the profile maximum."},{"policy_id":"fixed-base-k","description":"Existing fixed base-K retention."}]}

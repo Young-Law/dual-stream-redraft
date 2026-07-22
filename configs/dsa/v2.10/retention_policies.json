@@ -1,0 +1,1 @@
+{"spec_version":"v2.10-blocked-no-authoritative-source","policies":[{"policy_id":"v2.9-local-reconstructable-floor","description":"Existing local floor: retained reconstructable bytes must meet the profile minimum for emitted token evidence."}]}

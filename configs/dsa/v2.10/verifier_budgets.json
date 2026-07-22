@@ -1,0 +1,1 @@
+{"spec_version":"v2.10-blocked-no-authoritative-source","budgets":[{"budget_id":"h3e-ci-lite","latency_seconds":3.0,"peak_mib":512},{"budget_id":"h3e-ci-standard","latency_seconds":6.0,"peak_mib":1024},{"budget_id":"h3e-deep","latency_seconds":30.0,"peak_mib":2048},{"budget_id":"h3e-forensic","latency_seconds":120.0,"peak_mib":4096}]}
