@@ -246,3 +246,18 @@ Compact evidence decoding now dispatches by wire version before interpreting lay
 - `not_evaluated_short_fixture`: the artifact was shorter than the profile's canonical token-count floor and `--strict-profile-budget` was not set; structural, integrity, metadata, reconstruction, and retention-floor checks still ran.
 - `not_evaluated_disabled`: profile budget checks were disabled by the caller.
 - `not_evaluated_due_to_structural_failure`: decode, metadata binding, or structural verification failed before profile byte-budget evaluation could be computed.
+
+## DSA v2.10 software reference status
+
+This repository implements the DSA v2.10 software reference contract and its deterministic conformance suite. Empirical signal-validity and adversarial-evasion results are outside the scope of this implementation-alignment release.
+
+The v2.10 implementation adds V3.3 (`0x0303`) compact evidence structures, portable verifier work certificates, environment-normalized runtime reporting, `INCONCLUSIVE_INFRA` retry semantics, hybrid adaptive widening, protected keyed replay, signed tension-map bindings, retention requirements, retention receipts, lifecycle states, and a filesystem reference validator. V3.1 (`0x0301`) and V3.2 (`0x0302`) artifacts remain readable through version-dispatched legacy paths and are not reinterpreted as V3.3.
+
+DSA-R local assurance is implemented in software. DSA-P production assurance is not self-asserted by this repository; it requires device-bound capture evidence and valid independent retention receipts from authorized validators.
+
+Run local conformance with:
+
+```bash
+python -m dualstream.cli conformance v2.10
+python -m pytest
+```

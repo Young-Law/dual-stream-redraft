@@ -313,6 +313,36 @@ def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
         print(f"FAIL {status}: {detail}")
     return 0 if report.ok else 2
 
+
+def cmd_conformance(args: argparse.Namespace) -> int:
+    import tempfile
+    from .v210 import build_v33_artifact, verify_v33, FileSystemRetentionAdapter, make_retention_requirement, decode_v33
+    key = b"codex-v210-conformance-key-32bytes!!"[:32]
+    tokens = []
+    for i in range(128):
+        ids = list(range(i*16, i*16+10))
+        chosen = ids[6] if i % 17 == 0 else ids[0]
+        tokens.append({"chosen_id": chosen, "topk_ids": ids, "topk_scores": [1.0-(j/20) for j in range(10)], "history_trigger": i == 11})
+    with tempfile.TemporaryDirectory(prefix="dualstream-v210-") as td:
+        artifact = build_v33_artifact(tokens, audit_key=key, sequence_id=210, profile="DSA-CI-Lite", stochastic_rate_ppm=5000)
+        report = verify_v33(artifact)
+        if report["outcome"] not in {"LOCAL_PASS", "PASS"}:
+            print("DSA v2.10 conformance: FAIL")
+            print(json.dumps(report, indent=2, sort_keys=True))
+            return 2
+        dec = decode_v33(artifact)
+        issuer_key = b"issuer-key"
+        req = make_retention_requirement(dec["manifest"], issuer_id="local-verifier", key=issuer_key, retain_until="2099-01-01T00:00:00+00:00")
+        store = FileSystemRetentionAdapter(Path(td) / "store")
+        oid, version = store.write("artifact", artifact)
+        receipt = store.validate(oid, version, req, {"local-verifier": issuer_key})
+        summary = {"wire_version":"0x0303", "outcome": report["outcome"], "tokens": dec["manifest"].token_count, "chunks": dec["manifest"].chunk_count, "retention_receipt": bool(receipt.signature)}
+        if args.json:
+            print(json.dumps(summary, indent=2, sort_keys=True))
+        else:
+            print(f"DSA v2.10 conformance: PASS ({summary['tokens']} tokens, {summary['chunks']} chunks, wire {summary['wire_version']})")
+        return 0
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="dualstream",
@@ -375,6 +405,11 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--strict-profile-budget", action="store_true")
     vb.add_argument("--enforce-rss-budget", action="store_true")
     vb.set_defaults(func=cmd_verify_evidence_budget)
+
+    conf = sub.add_parser("conformance", help="Run deterministic DSA conformance checks")
+    conf.add_argument("version", choices=["v2.10"])
+    conf.add_argument("--json", action="store_true")
+    conf.set_defaults(func=cmd_conformance)
 
     def add_solver_flags(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--max-program-depth", type=int, default=2)

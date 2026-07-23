@@ -27,6 +27,11 @@ class EvidenceProfile:
     verifier_traced_peak_mib: int | None = None
     absolute_ci_safety_rail_mib: int | None = None
     default_pr_ci: bool = False
+    adaptive_policy_id: str = "hybrid-rank-keyed-history-canary-v1"
+    verifier_work_profile_id: str = "portable-work-v1"
+    runtime_calibration_id: str = "runtime-calibration-v1"
+    retention_policy_id: str = "local-floor-async-receipt-v1"
+    default_stochastic_rate_ppm: int = 5000
 
     def __post_init__(self):
         if self.verifier_peak_rss_mib is None:

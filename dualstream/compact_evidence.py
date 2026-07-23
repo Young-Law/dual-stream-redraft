@@ -12,6 +12,7 @@ from .evidence_profile import get_evidence_profile
 MAGIC = b"DSAEV29\0"
 VERSION_V31 = 0x0301  # legacy: one-byte metadata length, chosen_id stored per token
 VERSION_V32 = 0x0302  # current: two-byte metadata length, chosen_rank plus fallback chosen_id
+VERSION_V33 = 0x0303
 VERSION = VERSION_V32
 SCORE_SCALE = 255.0
 SCORE_TOLERANCE = 0.5 / SCORE_SCALE
@@ -278,6 +279,11 @@ def _decode_v32(buf: bytes) -> dict[str, Any]:
 def decode_compact_sequence(buf: bytes) -> dict[str, Any]:
     if len(buf) < _PREFIX.size:
         raise ValueError("malformed compact evidence header")
+    if buf[:1] == b"{":
+        from .v210 import decode_v33
+        d = decode_v33(buf)
+        h = d["header"]
+        return {"header": MonologueSequenceHeaderV3(h.sequence_id, d["manifest"].token_count, h.evidence_profile, h.base_topk, h.max_adaptive_rank, h.chunk_token_capacity, schema_version=VERSION_V33), "tokens": d["tokens"], "spans": d["spans"], "meta": d["object"].get("header", {}), "sha256": d["sha256"], "raw_bytes": d["raw_bytes"], "manifest": d["manifest"]}
     magic, version = _PREFIX.unpack_from(buf, 0)
     if magic != MAGIC:
         raise ValueError("compact evidence schema mismatch")
@@ -285,6 +291,11 @@ def decode_compact_sequence(buf: bytes) -> dict[str, Any]:
         return _decode_v31(buf)
     if version == VERSION_V32:
         return _decode_v32(buf)
+    if version == VERSION_V33 or buf[:1] == b"{":
+        from .v210 import decode_v33
+        d = decode_v33(buf)
+        h = d["header"]
+        return {"header": MonologueSequenceHeaderV3(h.sequence_id, d["manifest"].token_count, h.evidence_profile, h.base_topk, h.max_adaptive_rank, h.chunk_token_capacity, schema_version=VERSION_V33), "tokens": d["tokens"], "spans": d["spans"], "meta": d["object"].get("header", {}), "sha256": d["sha256"], "raw_bytes": d["raw_bytes"], "manifest": d["manifest"]}
     raise ValueError(f"unsupported compact evidence version 0x{version:04x}")
 
 

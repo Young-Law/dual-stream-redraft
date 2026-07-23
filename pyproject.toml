@@ -18,3 +18,7 @@ dualstream = "dualstream.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dualstream*"]
+exclude = ["tests*", "configs*", "experiments*", "reports*", "results*", "docs*", "eval*", "examples*", "scripts*"]
