@@ -121,6 +121,7 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
             "adaptive_k": getattr(cfg, "adaptive_k", False),
             "max_adaptive_k": getattr(cfg, "max_adaptive_k", None),
             "chunk_token_capacity": getattr(cfg, "chunk_token_capacity", 256),
+            "compact_wire_version": getattr(cfg, "compact_wire_version", 0x0303),
         },
     }
     if compact_bytes is not None:
@@ -195,6 +196,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         adaptive_k=getattr(args, "adaptive_k", False),
         max_adaptive_k=getattr(args, "max_adaptive_k", None),
         chunk_token_capacity=getattr(args, "chunk_token_capacity", 256),
+        compact_wire_version=int(getattr(args, "compact_wire_version", "0x0303"), 0),
     )
 
     if getattr(cfg, "compact_evidence", False):
@@ -315,33 +317,48 @@ def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
 
 
 def cmd_conformance(args: argparse.Namespace) -> int:
-    import tempfile
-    from .v210 import build_v33_artifact, verify_v33, FileSystemRetentionAdapter, make_retention_requirement, decode_v33
-    key = b"codex-v210-conformance-key-32bytes!!"[:32]
+    from .compact_evidence import VERSION_V33, decode_compact_sequence, encode_compact_sequence, verify_keyed_replay
+
+    key = b"codex-v210-conformance-key"
     tokens = []
     for i in range(128):
-        ids = list(range(i*16, i*16+10))
+        ids = list(range(i * 16, i * 16 + 10))
         chosen = ids[6] if i % 17 == 0 else ids[0]
-        tokens.append({"chosen_id": chosen, "topk_ids": ids, "topk_scores": [1.0-(j/20) for j in range(10)], "history_trigger": i == 11})
-    with tempfile.TemporaryDirectory(prefix="dualstream-v210-") as td:
-        artifact = build_v33_artifact(tokens, audit_key=key, sequence_id=210, profile="DSA-CI-Lite", stochastic_rate_ppm=5000)
-        report = verify_v33(artifact)
-        if report["outcome"] not in {"LOCAL_PASS", "PASS"}:
-            print("DSA v2.10 conformance: FAIL")
-            print(json.dumps(report, indent=2, sort_keys=True))
-            return 2
-        dec = decode_v33(artifact)
-        issuer_key = b"issuer-key"
-        req = make_retention_requirement(dec["manifest"], issuer_id="local-verifier", key=issuer_key, retain_until="2099-01-01T00:00:00+00:00")
-        store = FileSystemRetentionAdapter(Path(td) / "store")
-        oid, version = store.write("artifact", artifact)
-        receipt = store.validate(oid, version, req, {"local-verifier": issuer_key})
-        summary = {"wire_version":"0x0303", "outcome": report["outcome"], "tokens": dec["manifest"].token_count, "chunks": dec["manifest"].chunk_count, "retention_receipt": bool(receipt.signature)}
-        if args.json:
-            print(json.dumps(summary, indent=2, sort_keys=True))
-        else:
-            print(f"DSA v2.10 conformance: PASS ({summary['tokens']} tokens, {summary['chunks']} chunks, wire {summary['wire_version']})")
-        return 0
+        tokens.append({
+            "chosen_id": chosen,
+            "topk_ids": ids,
+            "topk_scores": [1.0 - (j / 20) for j in range(10)],
+            "trigger_flags": 4 if i == 11 else 0,
+        })
+    artifact = encode_compact_sequence(
+        tokens,
+        profile="DSA-CI-Lite",
+        sequence_id=210,
+        adaptive_k=True,
+        wire_version=VERSION_V33,
+        audit_key=key,
+        audit_key_id=7,
+        stochastic_rate_ppm=5000,
+    )
+    decoded = decode_compact_sequence(artifact)
+    verify_keyed_replay(decoded, {7: key})
+    summary = {
+        "wire_version": "0x0303",
+        "outcome": "LOCAL_PASS",
+        "tokens": decoded["header"].token_count,
+        "chunks": decoded["manifest"].chunk_count,
+        "raw_bytes_per_token": len(artifact) / decoded["header"].token_count,
+    }
+    if args.json:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        print(
+            "DSA v2.10 Phase 1 conformance: PASS "
+            f"({summary['tokens']} tokens, {summary['chunks']} chunks, "
+            f"wire {summary['wire_version']})"
+        )
+    return 0
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -394,6 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--adaptive-k", action="store_true")
     g.add_argument("--max-adaptive-k", type=int, default=None)
     g.add_argument("--chunk-token-capacity", type=int, default=256)
+    g.add_argument("--compact-wire-version", default="0x0303", choices=["0x0302", "0x0303"])
 
     g.set_defaults(func=cmd_generate)
 

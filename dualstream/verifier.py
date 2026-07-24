@@ -7,7 +7,7 @@ import tracemalloc
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, SCORE_TOLERANCE
+from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, verify_keyed_replay, SCORE_TOLERANCE
 from .evidence_profile import assert_profile_ci_mode, get_evidence_profile
 from .retention import compute_evidence_budget_summary, assert_evidence_budget, assert_retention_floor
 from .vocab import AST_RETENTION_FLOOR_VIOLATION, AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED, AST_SCHEMA_MISMATCH
@@ -103,7 +103,7 @@ def _evaluate_profile_budget(summary, prof, strict_profile_budget: bool) -> tupl
     return "pass", [], []
 
 
-def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False) -> VerificationReport:
+def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None) -> VerificationReport:
     errors: list[str] = []; failure_codes: list[int | str] = []
     start = time.perf_counter(); tracemalloc.start()
     prof = get_evidence_profile(profile)
@@ -111,6 +111,8 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
     try:
         assert_profile_ci_mode(prof, ci_mode)
         artifact_path = find_compact_artifact(path); data = artifact_path.read_bytes(); decoded = decode_compact_sequence(data)
+        if audit_keys is not None:
+            verify_keyed_replay(decoded, audit_keys)
         _enforce_metadata_binding(_load_run_metadata(path), artifact_path, decoded, decoded["sha256"])
         if decoded["header"].profile_id != prof.profile_id.value: raise ValueError(f"artifact profile {decoded['header'].profile_id} does not match requested {prof.profile_id.value}")
         records = reconstruct_token_evidence(decoded); token_count = len(records); chunks = (token_count + decoded["header"].chunk_token_capacity - 1)//decoded["header"].chunk_token_capacity if token_count else 0; spans=len(decoded.get("spans", []))

@@ -247,17 +247,18 @@ Compact evidence decoding now dispatches by wire version before interpreting lay
 - `not_evaluated_disabled`: profile budget checks were disabled by the caller.
 - `not_evaluated_due_to_structural_failure`: decode, metadata binding, or structural verification failed before profile byte-budget evaluation could be computed.
 
-## DSA v2.10 software reference status
 
-This repository implements the DSA v2.10 software reference contract and its deterministic conformance suite. Empirical signal-validity and adversarial-evasion results are outside the scope of this implementation-alignment release.
+## DSA v2.10 Phase 1 status
 
-The v2.10 implementation adds V3.3 (`0x0303`) compact evidence structures, portable verifier work certificates, environment-normalized runtime reporting, `INCONCLUSIVE_INFRA` retry semantics, hybrid adaptive widening, protected keyed replay, signed tension-map bindings, retention requirements, retention receipts, lifecycle states, and a filesystem reference validator. V3.1 (`0x0301`) and V3.2 (`0x0302`) artifacts remain readable through version-dispatched legacy paths and are not reinterpreted as V3.3.
+The repository implements the compact binary V3.3 evidence wire foundation, integrated model-generation path, legacy decoding compatibility, canonical artifact hashing, and authorized keyed-selection replay. Portable verifier governance, signed tension-map governance, and complete end-to-end retention assurance remain under implementation.
 
-DSA-R local assurance is implemented in software. DSA-P production assurance is not self-asserted by this repository; it requires device-bound capture evidence and valid independent retention receipts from authorized validators.
+V3.3 (`0x0303`) compact evidence starts with the existing compact-family magic and an explicit binary version field. V3.1 (`0x0301`) and V3.2 (`0x0302`) artifacts remain readable through version-specific legacy decoders and are not reinterpreted as V3.3.
 
-Run local conformance with:
+New compact-evidence generation defaults to V3.3 through `compact_wire_version=0x0303`; V3.2 remains available through an explicit compatibility option. The software-only implementation does not claim DSA-P assurance, which requires device-bound evidence and valid independent retention receipts.
+
+Run local Phase 1 conformance with:
 
 ```bash
 python -m dualstream.cli conformance v2.10
-python -m pytest
+python -m pytest tests/test_v210_conformance.py
 ```

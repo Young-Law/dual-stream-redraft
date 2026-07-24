@@ -1,79 +1,267 @@
-import json, subprocess, sys
-from datetime import datetime, timedelta, timezone
+import copy
+import struct
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
+import torch
 
-from dualstream.compact_evidence import VERSION_V31, VERSION_V32, VERSION_V33, decode_compact_sequence, encode_compact_sequence
-from dualstream.v210 import *
+from dualstream.compact_evidence import (
+    MAGIC,
+    PREFIX,
+    TRIGGER_CANARY,
+    TRIGGER_HISTORY,
+    TRIGGER_RANK,
+    TRIGGER_STOCHASTIC,
+    VERSION_V31,
+    VERSION_V32,
+    VERSION_V33,
+    _CHUNK_V33,
+    _HEADER_V31,
+    _MANIFEST_V33,
+    _TOKEN_V33_PREFIX,
+    decode_compact_sequence,
+    encode_compact_sequence,
+    reconstruct_token_evidence,
+    verify_keyed_replay,
+)
+from dualstream.generator import DualStreamGenerator, GenerationConfig
+from dualstream.retention import compute_evidence_budget_summary
+from dualstream.verifier import verify_evidence_artifact
 
-KEY=b"k"*32
+KEY = b"phase1-authorized-key"
+WRONG_KEY = b"phase1-wrong-key"
 
-def tokens(n=32):
-    out=[]
-    for i in range(n):
-        ids=list(range(1000+i*20,1010+i*20)); chosen=ids[7] if i%9==0 else ids[0]
-        out.append({"chosen_id":chosen,"topk_ids":ids,"topk_scores":[1-j/20 for j in range(10)],"history_trigger":i==5})
+
+def rows(count=16, width=10, rank_every=0):
+    out = []
+    for i in range(count):
+        ids = list(range(100000 + i * width, 100000 + i * width + width))
+        chosen = ids[6] if rank_every and i % rank_every == 0 else ids[0]
+        out.append({"chosen_id": chosen, "topk_ids": ids, "topk_scores": [1.0 - j / 20 for j in range(width)]})
     return out
 
-def test_v33_round_trip_and_manifest_work_certificate():
-    art=build_v33_artifact(tokens(), audit_key=KEY, sequence_id=7)
-    dec=decode_v33(art)
-    assert dec["header"].version==0x0303
-    assert dec["manifest"].token_count==32
-    assert dec["manifest"].trigger_count_by_reason["rank"] >= 1
-    report=verify_v33(art)
-    assert report["outcome"]=="LOCAL_PASS"
-    wc=report["work_certificate"]
-    assert wc["token_records_decoded"]==32
-    assert wc["candidate_entries_decoded"]==sum(int(k)*v for k,v in report["manifest"]["effective_k_histogram"].items())
-    assert wc["chunks_verified"]==report["manifest"]["chunk_count"]
-    assert wc["full_artifact_materializations"]==0
 
-def test_legacy_dispatch_isolated():
-    legacy=encode_compact_sequence([{"chosen_id":1,"topk_ids":[1,2,3],"topk_scores":[1,.5,.2]}], adaptive_k=False)
-    assert decode_compact_sequence(legacy)["header"].schema_version==VERSION_V32
-    art=build_v33_artifact(tokens(1), audit_key=KEY)
-    assert decode_compact_sequence(art)["header"].schema_version==VERSION_V33
-    bad=bytearray(legacy); bad[8:10]=(0x9999).to_bytes(2,"little")
-    with pytest.raises(ValueError): decode_compact_sequence(bytes(bad))
+def v33(**kwargs):
+    return encode_compact_sequence(rows(32, 10, rank_every=7), wire_version=VERSION_V33, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=200000, adaptive_k=True, **kwargs)
 
-def test_keyed_sampling_exact_replay_and_commitment_rejection():
-    ctx={"commit_identity":"abc","sequence_id":1,"policy_version":210,"benchmark_id":"b"}
-    bitmap=[keyed_select(KEY, **ctx, token_index=i, rate_ppm=500000) for i in range(64)]
-    assert bitmap == [keyed_select(KEY, **ctx, token_index=i, rate_ppm=500000) for i in range(64)]
-    assert bitmap != [keyed_select(b"x"*32, **ctx, token_index=i, rate_ppm=500000) for i in range(64)]
-    assert selection_commitment(KEY,ctx) != selection_commitment(b"x"*32,ctx)
-    art=build_v33_artifact(tokens(4), audit_key=KEY)
-    assert b"kkkk" not in art
-    obj=json.loads(art); obj["header"]["audit_selection_commitment"]="0"*64
-    with pytest.raises(ValueError): decode_v33(canonical_json(obj))
 
-def test_canary_only_deep_labeled():
-    t=tokens(1); t[0]["canary_trigger"]=True
-    with pytest.raises(ValueError): build_v33_artifact(t, audit_key=KEY, profile="DSA-CI-Lite")
-    assert decode_v33(build_v33_artifact(t, audit_key=KEY, profile="DSA-Deep", canary_eval=True))["tokens"][0].trigger_flags & TRIGGER_CANARY
+def mutate(data, offset, value):
+    buf = bytearray(data)
+    buf[offset] ^= value
+    return bytes(buf)
 
-def test_infra_retry_never_passes_incomplete():
-    art=build_v33_artifact(tokens(2), audit_key=KEY)
-    r=verify_v33(art, simulate_infra_failure=True)
-    assert r["outcome"]=="INCONCLUSIVE_INFRA"
-    assert verify_v33_with_retry(art, simulate_infra_failure=True)["outcome"]=="LOCAL_PASS"
 
-def test_retention_requirement_receipt_storage_failures(tmp_path):
-    art=build_v33_artifact(tokens(8), audit_key=KEY)
-    dec=decode_v33(art); issuer_key=b"issuer"
-    req=make_retention_requirement(dec["manifest"], issuer_id="issuer", key=issuer_key, retain_until=(datetime.now(timezone.utc)+timedelta(days=1)).isoformat())
-    store=FileSystemRetentionAdapter(tmp_path)
-    oid,ver=store.write("a", art)
-    receipt=store.validate(oid,ver,req,{"issuer":issuer_key})
-    assert verify_hmac({k:v for k,v in asdict(receipt).items() if k!="signature"}, receipt.signature, {store.validator_id:store.key})
-    assert store.possession_challenge(oid,ver,sha256_hex(art))
-    restored=store.restore(oid,ver,tmp_path/"restore.json")
-    assert restored.read_bytes()==art
-    (tmp_path/oid/ver).write_bytes(art[:-10])
-    with pytest.raises(Exception): store.validate(oid,ver,req,{"issuer":issuer_key})
+def test_v31_and_v32_decoder_compatibility_and_unknown_version():
+    legacy_v32 = encode_compact_sequence(rows(2, 3), wire_version=VERSION_V32, adaptive_k=False)
+    assert decode_compact_sequence(legacy_v32)["header"].schema_version == VERSION_V32
 
-def test_cli_conformance():
-    cp=subprocess.run([sys.executable,"-m","dualstream.cli","conformance","v2.10","--json"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert cp.returncode==0, cp.stderr+cp.stdout
-    assert json.loads(cp.stdout)["wire_version"]=="0x0303"
+    header = _HEADER_V31.pack(MAGIC, VERSION_V31, len("DSA-CI-Lite"), 2, 1, 1, 1, 3, 3, 1, 0)
+    body = b"{}"
+    token_body = struct.pack("<IBB", 11, 0, 3) + struct.pack("<IB", 11, 255) + struct.pack("<IB", 12, 1) + struct.pack("<IB", 13, 0)
+    chunk = struct.pack("<IIIII", 0, 0, 1, len(token_body), 0)
+    chunk = chunk[:-4] + struct.pack("<I", __import__("binascii").crc32(token_body) & 0xFFFFFFFF)
+    legacy_v31 = header + b"DSA-CI-Lite" + body + chunk + token_body
+    assert decode_compact_sequence(legacy_v31)["header"].schema_version == VERSION_V31
+
+    bad = bytearray(legacy_v32)
+    bad[8:10] = (0x9999).to_bytes(2, "little")
+    with pytest.raises(ValueError, match="unsupported"):
+        decode_compact_sequence(bytes(bad))
+
+
+def test_v33_binary_round_trip_prefix_and_no_json_discriminator():
+    artifact = v33()
+    assert artifact.startswith(MAGIC + struct.pack("<H", VERSION_V33))
+    assert artifact[:1] != b"{"
+    decoded = decode_compact_sequence(artifact)
+    assert decoded["header"].schema_version == VERSION_V33
+    assert decoded["header"].token_count == 32
+    assert decoded["manifest"].token_count == 32
+    assert decoded["tokens"][0].chosen_id == rows(1, 10, rank_every=1)[0]["chosen_id"]
+
+
+def test_malformed_truncated_corrupt_and_reordered_v33_rejected():
+    artifact = v33()
+    with pytest.raises(ValueError):
+        decode_compact_sequence(artifact[:20])
+    with pytest.raises(ValueError):
+        decode_compact_sequence(mutate(artifact, 30, 0xFF))
+
+    header_size = 197
+    metadata_len = struct.unpack_from("<H", artifact, header_size - 8)[0]
+    chunk_offset = header_size + 32 + metadata_len
+    corrupt_chunk = mutate(artifact, chunk_offset + _CHUNK_V33.size + 1, 0x01)
+    with pytest.raises(ValueError, match="chunk integrity"):
+        decode_compact_sequence(corrupt_chunk)
+    reordered = bytearray(artifact)
+    reordered[chunk_offset] = 1
+    with pytest.raises(ValueError, match="reordered"):
+        decode_compact_sequence(bytes(reordered))
+
+
+def test_missing_duplicate_token_records_rejected():
+    artifact = encode_compact_sequence(rows(2, 3), wire_version=VERSION_V33, adaptive_k=False)
+    decoded = decode_compact_sequence(artifact)
+    assert len(decoded["tokens"]) == 2
+    header_size = 197
+    metadata_len = struct.unpack_from("<H", artifact, header_size - 8)[0]
+    chunk_offset = header_size + 32 + metadata_len
+    missing = bytearray(artifact)
+    struct.pack_into("<H", missing, chunk_offset + 8, 1)
+    with pytest.raises(ValueError):
+        decode_compact_sequence(bytes(missing))
+
+    duplicate = bytearray(artifact)
+    struct.pack_into("<I", duplicate, chunk_offset + 4, 1)
+    with pytest.raises(ValueError):
+        decode_compact_sequence(bytes(duplicate))
+
+
+def test_chosen_reconstruction_fixed_variable_and_triggers():
+    artifact = v33()
+    evidence = reconstruct_token_evidence(artifact)
+    assert evidence[0]["chosen_id"] == rows(1, 10, rank_every=1)[0]["chosen_id"]
+    assert evidence[0]["effective_topk"] == 7
+    assert evidence[0]["trigger_flags"] & TRIGGER_RANK
+
+    fixed = encode_compact_sequence(rows(3, 3), wire_version=VERSION_V33, adaptive_k=False)
+    assert {r["effective_topk"] for r in reconstruct_token_evidence(fixed)} == {3}
+
+    hist_rows = rows(2, 10)
+    hist_rows[0]["trigger_flags"] = TRIGGER_HISTORY
+    decoded = decode_compact_sequence(encode_compact_sequence(hist_rows, wire_version=VERSION_V33, adaptive_k=True))
+    assert decoded["tokens"][0].trigger_flags & TRIGGER_HISTORY
+
+    multi_rows = rows(1, 10, rank_every=1)
+    multi_rows[0]["trigger_flags"] = TRIGGER_HISTORY
+    multi = decode_compact_sequence(encode_compact_sequence(multi_rows, wire_version=VERSION_V33, adaptive_k=True))
+    assert multi["tokens"][0].trigger_flags & TRIGGER_RANK
+    assert multi["tokens"][0].trigger_flags & TRIGGER_HISTORY
+
+
+def test_canary_separation():
+    canary_rows = rows(1, 10)
+    canary_rows[0]["trigger_flags"] = TRIGGER_CANARY
+    with pytest.raises(ValueError, match="canary"):
+        encode_compact_sequence(canary_rows, wire_version=VERSION_V33)
+    artifact = encode_compact_sequence(canary_rows, wire_version=VERSION_V33, profile="DSA-Deep", canary_eval=True)
+    assert decode_compact_sequence(artifact)["tokens"][0].trigger_flags & TRIGGER_CANARY
+
+
+def test_exact_keyed_replay_and_tamper_rejection():
+    artifact = v33()
+    decoded = decode_compact_sequence(artifact)
+    verify_keyed_replay(decoded, {3: KEY})
+    with pytest.raises(ValueError, match="commitment|replay"):
+        verify_keyed_replay(decoded, {3: WRONG_KEY})
+    with pytest.raises(ValueError, match="unknown audit key"):
+        verify_keyed_replay(decoded, {99: KEY})
+    assert KEY not in artifact
+
+    # Alter commitment-bound public replay context.
+    tampered = copy.deepcopy(decoded)
+    tampered["meta"]["benchmark_id"] = "changed"
+    with pytest.raises(ValueError, match="commitment"):
+        verify_keyed_replay(tampered, {3: KEY})
+
+    # Added or removed stochastic trigger flags must fail replay.
+    changed = copy.deepcopy(decoded)
+    for token in changed["tokens"]:
+        if not token.trigger_flags & (TRIGGER_RANK | TRIGGER_HISTORY | TRIGGER_CANARY):
+            changed_token = token
+            break
+    changed["tokens"][changed_token.token_index] = changed_token.__class__(
+        changed_token.token_index,
+        changed_token.chosen_id,
+        changed_token.topk_ids,
+        changed_token.topk_scores,
+        changed_token.effective_topk,
+        changed_token.chosen_rank,
+        changed_token.trigger_flags ^ TRIGGER_STOCHASTIC,
+        changed_token.record_flags,
+    )
+    with pytest.raises(ValueError, match="replay mismatch"):
+        verify_keyed_replay(changed, {3: KEY})
+
+
+def test_canonical_preimage_stability_and_hash_tampering():
+    artifact1 = v33(sequence_id=123)
+    artifact2 = v33(sequence_id=123)
+    assert artifact1 == artifact2
+    decoded = decode_compact_sequence(artifact1)
+    assert len(decoded["manifest"].artifact_content_hash) == 64
+    manifest_start = len(artifact1) - _MANIFEST_V33.size
+    tampered_hash = mutate(artifact1, manifest_start, 0x01)
+    with pytest.raises(ValueError, match="content hash"):
+        decode_compact_sequence(tampered_hash)
+    tampered_content = mutate(artifact1, 260, 0x01)
+    with pytest.raises(ValueError):
+        decode_compact_sequence(tampered_content)
+
+
+def test_shared_consumers_accept_v33(tmp_path):
+    artifact = encode_compact_sequence(rows(10000, 3), wire_version=VERSION_V33, profile="DSA-CI-Lite", adaptive_k=False)
+    path = tmp_path / "artifact.dsae"
+    path.write_bytes(artifact)
+    assert reconstruct_token_evidence(artifact)[0]["chosen_rank"] == 1
+    summary = compute_evidence_budget_summary(artifact, "DSA-CI-Lite")
+    assert summary.raw_bytes_per_token <= 24
+    report = verify_evidence_artifact(path, profile="DSA-CI-Lite", ci_mode="pr")
+    assert report.ok, report.errors
+    cp = subprocess.run(
+        [sys.executable, "-m", "dualstream.cli", "verify-evidence-budget", "--artifact", str(path), "--profile", "DSA-CI-Lite", "--ci-mode", "pr", "--json"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert cp.returncode == 0, cp.stdout + cp.stderr
+
+
+class FakeTokenizer:
+    eos_token_id = None
+    pad_token_id = None
+    bos_token_id = None
+    additional_special_tokens_ids = []
+
+    def __call__(self, text, return_tensors="pt"):
+        return {"input_ids": torch.tensor([[1]])}
+
+    def decode(self, ids, skip_special_tokens=False):
+        return "x"
+
+
+class FakeModel:
+    def __call__(self, **kwargs):
+        class Output:
+            pass
+        out = Output()
+        logits = torch.arange(0, 32, dtype=torch.float32).reshape(1, 1, 32)
+        out.logits = logits
+        out.past_key_values = None
+        out.attentions = None
+        out.hidden_states = None
+        return out
+
+
+def test_generator_produces_v33_compact_evidence():
+    gen = DualStreamGenerator.__new__(DualStreamGenerator)
+    gen.model_name = "fake"
+    gen.device = "cpu"
+    gen.tokenizer = FakeTokenizer()
+    gen.model = FakeModel()
+    cfg = GenerationConfig(max_new_tokens=2, compact_evidence=True, compact_wire_version=VERSION_V33, adaptive_k=True, top_k=10, do_sample=False)
+    result = gen.generate("prompt", cfg)
+    decoded = decode_compact_sequence(result["compact_evidence_bytes"])
+    assert decoded["header"].schema_version == VERSION_V33
+    assert decoded["header"].token_count == 2
+
+
+def test_10000_token_raw_byte_ceilings():
+    lite = encode_compact_sequence(rows(10000, 3), wire_version=VERSION_V33, profile="DSA-CI-Lite", adaptive_k=False)
+    standard = encode_compact_sequence(rows(10000, 5), wire_version=VERSION_V33, profile="DSA-CI-Standard", adaptive_k=False)
+    lite_bpt = len(lite) / 10000
+    standard_bpt = len(standard) / 10000
+    assert lite_bpt <= 24
+    assert standard_bpt <= 48
