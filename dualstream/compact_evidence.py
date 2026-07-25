@@ -237,11 +237,18 @@ def audit_selection_commitment(
     rate_ppm: int,
     benchmark_id: str = "",
     eligibility_digest: str = "",
+    profile_id: str = "",
+    base_k: int = 0,
+    max_adaptive_k: int = 0,
+    adaptive_policy_id: str = "",
+    canary_eval: bool = False,
     domain: str = "DSA-v2.10-keyed-sample",
 ) -> bytes:
     public = (
         f"{domain}\0{commit_identity}\0{sequence_id}\0{policy_version}"
-        f"\0{rate_ppm}\0{benchmark_id}\0{eligibility_digest}"
+        f"\0{rate_ppm}\0{benchmark_id}\0{profile_id}\0{base_k}"
+        f"\0{max_adaptive_k}\0{adaptive_policy_id}\0{int(canary_eval)}"
+        f"\0{eligibility_digest}"
     ).encode("utf-8")
     return hmac.new(key, public, hashlib.sha256).digest()
 
@@ -282,6 +289,8 @@ def _apply_v33_triggers(
     policy_version: int,
     benchmark_id: str,
     canary_eval: bool,
+    profile_id: str,
+    adaptive_policy_id: str,
 ) -> tuple[list[CompactTokenEvidenceV3], bytes, str, str]:
     commit = _commit_identity(records, base_k)
     if stochastic_rate_ppm and audit_key is None:
@@ -340,6 +349,11 @@ def _apply_v33_triggers(
             rate_ppm=stochastic_rate_ppm,
             benchmark_id=benchmark_id,
             eligibility_digest=eligibility_digest,
+            profile_id=profile_id,
+            base_k=base_k,
+            max_adaptive_k=max_adaptive_rank,
+            adaptive_policy_id=adaptive_policy_id,
+            canary_eval=canary_eval,
         )
     return out, commitment, commit, eligibility_digest
 
@@ -492,6 +506,10 @@ def _normalise_v33_source_tokens(tokens: Iterable[Any], max_rank: int) -> list[C
     for index, item in enumerate(tokens):
         is_dict = isinstance(item, dict)
         token_index = int(item.get("token_index", index) if is_dict else getattr(item, "token_index", index))
+        if token_index != index:
+            raise ValueError(
+                f"token evidence index {token_index} does not match expected {index}"
+            )
         chosen_id = int(item["chosen_id"] if is_dict else getattr(item, "chosen_id"))
         topk = item.get("topk") if is_dict else getattr(item, "topk", None)
         if topk is not None:
@@ -528,6 +546,7 @@ def encode_compact_sequence_v33(
     if assurance_class != "DSA-R":
         raise ValueError("software-only V3.3 generation supports DSA-R only")
     max_rank = prof.max_adaptive_k if max_adaptive_k is None else int(max_adaptive_k)
+    adaptive_policy_id = "dsa-v2.10-hybrid-phase1"
     base_records = _normalise_v33_source_tokens(tokens, max_rank)
     records, commitment, commit_identity, eligibility_digest = _apply_v33_triggers(
         base_records,
@@ -541,15 +560,18 @@ def encode_compact_sequence_v33(
         policy_version=210,
         benchmark_id=benchmark_id,
         canary_eval=canary_eval,
+        profile_id=prof.profile_id.value,
+        adaptive_policy_id=adaptive_policy_id,
     )
     spans_norm = _normalise_spans(spans)
     metadata = {
         "profile_id": prof.profile_id.value,
-        "adaptive_policy": "dsa-v2.10-hybrid-phase1",
+        "adaptive_policy": adaptive_policy_id,
         "commit_identity": commit_identity,
         "pre_stochastic_eligibility_digest": eligibility_digest,
         "prompt_nonce": int(sequence_id) & 0xFFFFFFFFFFFFFFFF,
         "benchmark_id": benchmark_id,
+        "canary_eval": bool(canary_eval),
     }
     metadata_bytes = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
     metadata_digest = _sha256(metadata_bytes)
@@ -658,8 +680,8 @@ def _encode_v33_chunks(
         payload = bytearray()
         max_effective_topk = base_k
         counts = {TRIGGER_RANK: 0, TRIGGER_STOCHASTIC: 0, TRIGGER_HISTORY: 0, TRIGGER_CANARY: 0}
-        for rec in subset:
-            if rec.token_index != start + len(payloads) * 0 + (rec.token_index - start):
+        for local_offset, rec in enumerate(subset):
+            if rec.token_index != start + local_offset:
                 raise ValueError("non-contiguous token evidence")
             max_effective_topk = max(max_effective_topk, rec.effective_topk)
             for bit in counts:
@@ -1218,6 +1240,11 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
         rate_ppm=int(meta.get("stochastic_rate_ppm", 0)),
         benchmark_id=str(meta.get("benchmark_id", "")),
         eligibility_digest=eligibility_digest,
+        profile_id=str(data["header"].profile_id),
+        base_k=base_k,
+        max_adaptive_k=int(data["header"].max_adaptive_k),
+        adaptive_policy_id=str(meta.get("adaptive_policy", "")),
+        canary_eval=bool(meta.get("canary_eval", False)),
     ).hex()
     if not hmac.compare_digest(expected_commitment, str(meta.get("audit_selection_commitment", ""))):
         raise ValueError("audit selection commitment mismatch")

@@ -85,6 +85,23 @@ def rebuild_v33_public_integrity(artifact, *, payload_mutator=None, manifest_flo
     return bytes(buf)
 
 
+def rebuild_v33_header_integrity(artifact, field_mutator):
+    """Alter a header declaration and rebuild all unkeyed enclosing hashes."""
+    buf = bytearray(artifact)
+    fields = list(_HEADER_V33.unpack_from(buf))
+    field_mutator(fields)
+    header = _HEADER_V33.pack(*fields)
+    buf[:_HEADER_V33.size] = header
+    manifest_offset = len(buf) - _MANIFEST_V33.size
+    manifest = list(_MANIFEST_V33.unpack_from(buf, manifest_offset))
+    manifest[0] = b"\0" * 32
+    manifest[1] = hashlib.sha256(header).digest()
+    zero_manifest = _MANIFEST_V33.pack(*manifest)
+    manifest[0] = hashlib.sha256(bytes(buf[:manifest_offset]) + zero_manifest).digest()
+    buf[manifest_offset:] = _MANIFEST_V33.pack(*manifest)
+    return bytes(buf)
+
+
 def first_record_trigger_mutator(set_bits=0, clear_bits=0):
     def edit(payload, chunk):
         old = payload[2]
@@ -159,6 +176,23 @@ def test_missing_duplicate_token_records_rejected():
     struct.pack_into("<I", duplicate, chunk_offset + 4, 1)
     with pytest.raises(ValueError):
         decode_compact_sequence(bytes(duplicate))
+
+
+@pytest.mark.parametrize(
+    "indexes",
+    [
+        [0, 0],       # duplicate
+        [0, 2],       # missing index 1
+        [1, 0],       # reordered
+        [0, 1, 3],    # noncontiguous
+    ],
+)
+def test_v33_encoder_rejects_invalid_token_indexes(indexes):
+    source = rows(len(indexes), 3)
+    for rec, token_index in zip(source, indexes):
+        rec["token_index"] = token_index
+    with pytest.raises(ValueError, match="does not match expected"):
+        encode_compact_sequence(source, wire_version=VERSION_V33, adaptive_k=False)
 
 
 def test_chosen_reconstruction_fixed_variable_and_triggers():
@@ -287,6 +321,28 @@ def test_false_rank_exemption_and_changed_legitimate_eligibility_rejected():
         legitimate, payload_mutator=first_record_trigger_mutator(TRIGGER_CANARY, TRIGGER_HISTORY))
     with pytest.raises(ValueError, match="eligibility|commitment"):
         verify_keyed_replay(changed, {3: KEY})
+
+
+def test_profile_and_maximum_k_substitution_rejected_after_public_hash_rebuild():
+    artifact = encode_compact_sequence(
+        rows(4, 10), wire_version=VERSION_V33, profile="DSA-CI-Standard",
+        audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=500_000,
+    )
+    # Deep and CI-Standard share base K=5, so this remains structurally valid and
+    # specifically exercises the keyed profile binding rather than the decoder's
+    # ordinary profile/base-K consistency check.
+    changed_profile = rebuild_v33_header_integrity(
+        artifact, lambda fields: fields.__setitem__(2, 3)
+    )
+    with pytest.raises(ValueError, match="profile|commitment"):
+        verify_keyed_replay(changed_profile, {3: KEY})
+
+    changed_max_k = rebuild_v33_header_integrity(
+        artifact, lambda fields: fields.__setitem__(13, fields[13] + 1)
+    )
+    decode_compact_sequence(changed_max_k)
+    with pytest.raises(ValueError, match="commitment"):
+        verify_keyed_replay(changed_max_k, {3: KEY})
 
 
 def test_authenticated_multi_trigger_record_replays():
