@@ -13,10 +13,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+<<<<<<< HEAD
 test = [
   "pytest>=8,<10",
   "httpx>=0.27,<1",
 ]
+=======
+test = ["pytest>=8"]
+>>>>>>> f2bdf45 (Authenticate complete V3.3 replay context)
 
 [project.scripts]
 dualstream = "dualstream.cli:main"

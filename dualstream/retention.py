@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from .compact_evidence import decode_compact_sequence, _HEADER, _CHUNK, _TOKEN, _TOPK, _SPAN
+from .compact_evidence import decode_compact_sequence, compute_v33_local_minimum_reconstructable_bytes, _HEADER, _CHUNK, _TOKEN, _TOPK, _SPAN
 from .evidence_profile import get_evidence_profile
 
 
@@ -35,9 +35,15 @@ def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-C
     header = decoded["header"]
     manifest = decoded.get("manifest")
     if manifest is not None and getattr(header, "schema_version", None) == 0x0303:
+<<<<<<< HEAD
         # The V3.3 decoder has independently reconstructed the exact binary-layout
         # floor and rejected any manifest mismatch before returning this value.
         floor = len(data)
+=======
+        floor = compute_v33_local_minimum_reconstructable_bytes(bytes(data))
+        if int(manifest.minimum_reconstructable_bytes) != floor:
+            raise ValueError("V3.3 minimum reconstructable byte floor mismatch")
+>>>>>>> f2bdf45 (Authenticate complete V3.3 replay context)
     else:
         fallback_count = sum(1 for t in decoded["tokens"] if int(getattr(t, "chosen_rank", 255)) == 255)
         meta_len = len(__import__("json").dumps(decoded.get("meta", {}), sort_keys=True, separators=(",", ":")).encode())
