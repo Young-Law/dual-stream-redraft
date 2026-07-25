@@ -236,11 +236,12 @@ def audit_selection_commitment(
     policy_version: int,
     rate_ppm: int,
     benchmark_id: str = "",
+    eligibility_digest: str = "",
     domain: str = "DSA-v2.10-keyed-sample",
 ) -> bytes:
     public = (
         f"{domain}\0{commit_identity}\0{sequence_id}\0{policy_version}"
-        f"\0{rate_ppm}\0{benchmark_id}"
+        f"\0{rate_ppm}\0{benchmark_id}\0{eligibility_digest}"
     ).encode("utf-8")
     return hmac.new(key, public, hashlib.sha256).digest()
 
@@ -252,6 +253,20 @@ def _commit_identity(records: list[CompactTokenEvidenceV3], base_k: int) -> str:
         for token_id, score in zip(rec.topk_ids[:base_k], rec.topk_scores[:base_k]):
             h.update(_TOPK_V33.pack(int(token_id), quantize_score(score)))
     return h.hexdigest()
+
+
+def _pre_stochastic_eligibility_digest(records: list[CompactTokenEvidenceV3]) -> str:
+    """Bind the exact Phase-1 rank/history/canary state evaluated at encode time.
+
+    History and canary provenance is deliberately not independently established by
+    the Phase-1 verifier, but this digest prevents those states from being changed
+    after keyed selection has been committed.
+    """
+    state = bytearray()
+    mask = TRIGGER_RANK | TRIGGER_HISTORY | TRIGGER_CANARY
+    for rec in records:
+        state += struct.pack("<IB", rec.token_index, rec.trigger_flags & mask)
+    return _sha256_hex(bytes(state))
 
 
 def _apply_v33_triggers(
@@ -267,20 +282,10 @@ def _apply_v33_triggers(
     policy_version: int,
     benchmark_id: str,
     canary_eval: bool,
-) -> tuple[list[CompactTokenEvidenceV3], bytes, str]:
+) -> tuple[list[CompactTokenEvidenceV3], bytes, str, str]:
     commit = _commit_identity(records, base_k)
-    commitment = ZERO_HASH
     if stochastic_rate_ppm and audit_key is None:
         raise ValueError("keyed stochastic sampling requires an audit key")
-    if audit_key is not None:
-        commitment = audit_selection_commitment(
-            audit_key,
-            commit_identity=commit,
-            sequence_id=sequence_id,
-            policy_version=policy_version,
-            rate_ppm=stochastic_rate_ppm,
-            benchmark_id=benchmark_id,
-        )
 
     out: list[CompactTokenEvidenceV3] = []
     for rec in records:
@@ -292,6 +297,9 @@ def _apply_v33_triggers(
             effective_topk = max(effective_topk, raw_rank)
         if flags & TRIGGER_CANARY and not canary_eval:
             raise ValueError("canary evidence is only allowed in explicitly labeled evaluation runs")
+        # Stochastic selection is evaluated only after this canonical state is
+        # finalized. Replay authenticates this exact state before trusting an
+        # exemption.
         otherwise_untriggered = not (flags & (TRIGGER_RANK | TRIGGER_HISTORY | TRIGGER_CANARY))
         if otherwise_untriggered and audit_key is not None and stochastic_rate_ppm:
             if keyed_sample_selected(
@@ -321,7 +329,19 @@ def _apply_v33_triggers(
                 record_flags=rec.record_flags,
             )
         )
-    return out, commitment, commit
+    eligibility_digest = _pre_stochastic_eligibility_digest(out)
+    commitment = ZERO_HASH
+    if audit_key is not None:
+        commitment = audit_selection_commitment(
+            audit_key,
+            commit_identity=commit,
+            sequence_id=sequence_id,
+            policy_version=policy_version,
+            rate_ppm=stochastic_rate_ppm,
+            benchmark_id=benchmark_id,
+            eligibility_digest=eligibility_digest,
+        )
+    return out, commitment, commit, eligibility_digest
 
 
 def encode_compact_sequence(
@@ -509,7 +529,7 @@ def encode_compact_sequence_v33(
         raise ValueError("software-only V3.3 generation supports DSA-R only")
     max_rank = prof.max_adaptive_k if max_adaptive_k is None else int(max_adaptive_k)
     base_records = _normalise_v33_source_tokens(tokens, max_rank)
-    records, commitment, commit_identity = _apply_v33_triggers(
+    records, commitment, commit_identity, eligibility_digest = _apply_v33_triggers(
         base_records,
         base_k=prof.base_k,
         max_adaptive_rank=max_rank,
@@ -527,6 +547,8 @@ def encode_compact_sequence_v33(
         "profile_id": prof.profile_id.value,
         "adaptive_policy": "dsa-v2.10-hybrid-phase1",
         "commit_identity": commit_identity,
+        "pre_stochastic_eligibility_digest": eligibility_digest,
+        "prompt_nonce": int(sequence_id) & 0xFFFFFFFFFFFFFFFF,
         "benchmark_id": benchmark_id,
     }
     metadata_bytes = json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -571,6 +593,7 @@ def encode_compact_sequence_v33(
     pre_manifest = header + metadata_digest + metadata_bytes
     chunk_bytes = b"".join(chunks)
     body_without_manifest = pre_manifest + chunk_bytes + span_body
+    minimum_reconstructable = len(body_without_manifest) + _MANIFEST_V33.size
     manifest_zero = _pack_v33_manifest(
         ZERO_HASH,
         _sha256(header),
@@ -579,7 +602,7 @@ def encode_compact_sequence_v33(
         len(chunks),
         len(spans_norm),
         len(body_without_manifest) + _MANIFEST_V33.size,
-        sum(len(payload) for payload in chunk_payloads),
+        minimum_reconstructable,
         records,
         ZERO_HASH,
     )
@@ -592,7 +615,7 @@ def encode_compact_sequence_v33(
         len(chunks),
         len(spans_norm),
         len(body_without_manifest) + _MANIFEST_V33.size,
-        sum(len(payload) for payload in chunk_payloads),
+        minimum_reconstructable,
         records,
         ZERO_HASH,
     )
@@ -1011,6 +1034,14 @@ def _decode_v33(buf: bytes) -> dict[str, Any]:
         raise ValueError("V3.3 artifact content hash mismatch")
     if manifest.raw_evidence_bytes != len(buf):
         raise ValueError("V3.3 raw evidence byte count mismatch")
+    local_floor = v33_minimum_reconstructable_bytes(
+        metadata_bytes=metadata_bytes,
+        chunks=chunks,
+        tokens=records,
+        spans=spans,
+    )
+    if manifest.minimum_reconstructable_bytes != local_floor:
+        raise ValueError("V3.3 minimum reconstructable byte count mismatch")
     return {
         "header": MonologueSequenceHeaderV3(sequence_id, token_count, profile_id, base_topk, max_adaptive_rank, chunk_token_capacity, schema_version=VERSION_V33),
         "tokens": records,
@@ -1023,11 +1054,42 @@ def _decode_v33(buf: bytes) -> dict[str, Any]:
             "policy_version": adaptive_policy_id,
             "stochastic_rate_ppm": stochastic_rate_ppm,
             "benchmark_id": metadata.get("benchmark_id", ""),
+            "prompt_nonce": prompt_nonce,
+            "pre_stochastic_eligibility_digest": metadata.get("pre_stochastic_eligibility_digest", ""),
         },
         "manifest": manifest,
         "sha256": hashlib.sha256(buf).hexdigest(),
         "raw_bytes": len(buf),
     }
+
+
+def v33_minimum_reconstructable_bytes(
+    *,
+    metadata_bytes: bytes,
+    chunks: list[EvidenceChunkV3],
+    tokens: list[CompactTokenEvidenceV3],
+    spans: list[SignalSpanEventV3],
+) -> int:
+    """Calculate the V3.3 floor solely from the decoded canonical wire layout."""
+    token_bytes = sum(
+        _TOKEN_V33_PREFIX.size
+        + (_TOPK_V33.size * rec.effective_topk)
+        + (4 if rec.record_flags & RECORD_HAS_FALLBACK_CHOSEN_ID else 0)
+        for rec in tokens
+    )
+    span_bytes = sum(
+        _SPAN_V33.size + 1 + (_SPAN_V33_EVAL.size if span.evaluator_id is not None else 0)
+        for span in spans
+    )
+    return (
+        _HEADER_V33.size
+        + 32  # metadata digest
+        + len(metadata_bytes)
+        + len(chunks) * _CHUNK_V33.size
+        + token_bytes
+        + span_bytes
+        + _MANIFEST_V33.size
+    )
 
 
 def _decode_v33_chunk_payload(payload: bytes, start: int, count: int, base_topk: int) -> list[CompactTokenEvidenceV3]:
@@ -1126,24 +1188,47 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
     if audit_key_id not in audit_keys:
         raise ValueError("unknown audit key id")
     key = audit_keys[audit_key_id]
+    records = data["tokens"]
+    base_k = int(data["header"].base_k)
+    recomputed_identity = _commit_identity(records, base_k)
+    serialized_identity = str(meta.get("commit_identity", ""))
+    if not hmac.compare_digest(recomputed_identity, serialized_identity):
+        raise ValueError("serialized commit identity mismatch")
+
+    # Rank is independently derivable from retained evidence. History/canary
+    # provenance validation remains Phase 2, but their exact encode-time state is
+    # authenticated by the keyed commitment in Phase 1.
+    for rec in records:
+        expected_rank = rec.chosen_rank > base_k and rec.chosen_rank <= int(data["header"].max_adaptive_k)
+        if bool(rec.trigger_flags & TRIGGER_RANK) != expected_rank:
+            raise ValueError("pre-stochastic rank eligibility mismatch")
+    eligibility_digest = _pre_stochastic_eligibility_digest(records)
+    serialized_eligibility = str(meta.get("pre_stochastic_eligibility_digest", ""))
+    if not hmac.compare_digest(eligibility_digest, serialized_eligibility):
+        raise ValueError("pre-stochastic eligibility mismatch")
+
+    prompt_nonce = int(meta.get("prompt_nonce", -1))
+    if prompt_nonce < 0 or prompt_nonce > 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("missing or invalid 64-bit prompt nonce")
     expected_commitment = audit_selection_commitment(
         key,
-        commit_identity=str(meta.get("commit_identity", "")),
-        sequence_id=int(data["header"].sequence_id),
+        commit_identity=recomputed_identity,
+        sequence_id=prompt_nonce,
         policy_version=int(meta.get("policy_version", 210)),
         rate_ppm=int(meta.get("stochastic_rate_ppm", 0)),
         benchmark_id=str(meta.get("benchmark_id", "")),
+        eligibility_digest=eligibility_digest,
     ).hex()
     if not hmac.compare_digest(expected_commitment, str(meta.get("audit_selection_commitment", ""))):
         raise ValueError("audit selection commitment mismatch")
-    for rec in data["tokens"]:
+    for rec in records:
         otherwise_untriggered = not (rec.trigger_flags & (TRIGGER_RANK | TRIGGER_HISTORY | TRIGGER_CANARY))
         expected = False
         if otherwise_untriggered and int(meta.get("stochastic_rate_ppm", 0)):
             expected = keyed_sample_selected(
                 key,
-                commit_identity=str(meta.get("commit_identity", "")),
-                sequence_id=int(data["header"].sequence_id),
+                commit_identity=recomputed_identity,
+                sequence_id=prompt_nonce,
                 token_index=rec.token_index,
                 policy_version=int(meta.get("policy_version", 210)),
                 rate_ppm=int(meta.get("stochastic_rate_ppm", 0)),

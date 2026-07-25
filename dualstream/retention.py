@@ -35,7 +35,9 @@ def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-C
     header = decoded["header"]
     manifest = decoded.get("manifest")
     if manifest is not None and getattr(header, "schema_version", None) == 0x0303:
-        floor = int(manifest.minimum_reconstructable_bytes)
+        # The V3.3 decoder has independently reconstructed the exact binary-layout
+        # floor and rejected any manifest mismatch before returning this value.
+        floor = len(data)
     else:
         fallback_count = sum(1 for t in decoded["tokens"] if int(getattr(t, "chosen_rank", 255)) == 255)
         meta_len = len(__import__("json").dumps(decoded.get("meta", {}), sort_keys=True, separators=(",", ":")).encode())
