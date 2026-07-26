@@ -57,3 +57,35 @@ def assert_retention_floor(summary: EvidenceBudgetSummary) -> None:
         raise ValueError("retained compact evidence is below the reconstructable floor")
     if summary.token_count <= 0:
         raise ValueError("summary-only artifact has no reconstructable token evidence")
+
+
+@dataclass(frozen=True)
+class RetentionRequirement:
+    artifact_content_hash: str
+    chunk_merkle_root: str
+    minimum_reconstructable_bytes: int
+    profile_hash: str
+    schema_hash: str
+    required_retention_class: str
+    not_before: float
+    retain_until: float
+    allowed_transforms: str
+    validation_policy_id: str
+    issuer_id: str
+    signature: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RetentionReceipt:
+    retention_requirement_hash: str
+    storage_object_id: str
+    storage_object_version: str
+    persisted_content_hash: str
+    verified_reconstructable_bytes: int
+    validation_time: float
+    retain_until: float
+    storage_class: str
+    protection_flags: str
+    validator_id: str
+    receipt_expiry: float
+    signature: dict[str, str]
