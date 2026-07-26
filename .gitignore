@@ -27,3 +27,6 @@ tmp/
 
 # Packaging
 *.egg-info/
+
+.gemini/
+gha-creds-*.json
