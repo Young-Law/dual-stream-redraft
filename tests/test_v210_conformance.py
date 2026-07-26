@@ -1,11 +1,7 @@
-import copy
-<<<<<<< HEAD
 import binascii
-import hashlib
-=======
+import copy
 import hashlib
 import json
->>>>>>> f2bdf45 (Authenticate complete V3.3 replay context)
 import struct
 import subprocess
 import sys
@@ -562,11 +558,25 @@ def test_keyed_context_rejects_key_id_and_local_sequence_substitution():
     ],
 )
 def test_keyed_context_rejects_fixed_adaptive_policy_substitution(adaptive, header_policy, header_max, metadata_policy):
-    artifact = encode_compact_sequence(rows(32, 10), wire_version=VERSION_V33, adaptive_k=adaptive, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=200000)
+    # Keep the rewritten fixed-policy case structurally decodable so the test
+    # reaches authenticated policy validation rather than failing on payload size.
+    width = 3 if adaptive else 10
+    artifact = encode_compact_sequence(rows(32, width), wire_version=VERSION_V33, adaptive_k=adaptive, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=200000)
     changed = _rewrite_v33_public_context(artifact, header_updates={13: header_max, 14: header_policy}, metadata_updates={"adaptive_policy": metadata_policy})
     assert decode_compact_sequence(changed)["meta"]["adaptive_policy"] == metadata_policy
     with pytest.raises(ValueError, match="eligibility|commitment|policy"):
         verify_keyed_replay(changed, {3: KEY})
+
+
+def test_adaptive_policy_rejects_nonadaptive_maximum_boundary():
+    with pytest.raises(ValueError, match="adaptive_k requires"):
+        encode_compact_sequence(
+            rows(4, 3),
+            wire_version=VERSION_V33,
+            profile="DSA-CI-Lite",
+            adaptive_k=True,
+            max_adaptive_k=3,
+        )
 
 
 def test_authenticated_metadata_rejects_noncanonical_json_types():
