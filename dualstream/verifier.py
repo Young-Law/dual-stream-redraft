@@ -6,6 +6,7 @@ import time
 import tracemalloc
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, verify_keyed_replay, SCORE_TOLERANCE
 from .evidence_profile import assert_profile_ci_mode, get_evidence_profile
@@ -193,4 +194,37 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         outcome = "INCONCLUSIVE_INFRA"
 
     tps = token_count/elapsed if elapsed > 0 else 0.0
-    return VerificationReport(ok, prof.profile_id.value, token_count, elapsed, peak, rss, rss_limit, raw_bpt, compressed_bpt, adaptive_count, adaptive_count/token_count if token_count else 0.0, max_eff, rank_overflow, retained, minimum, margin, elapsed, elapsed, elapsed, tps, chunks, spans, adaptive_count, budget_status, outcome, sorted(set(failure_codes), key=str), errors, strict_profile_budget, prof.minimum_budget_token_count, prof.ceiling_bytes_per_token, cert, "LOCAL_PASS")
+    return VerificationReport(
+        ok=ok,
+        profile_id=prof.profile_id.value,
+        token_count=token_count,
+        elapsed_seconds=elapsed,
+        peak_tracemalloc_bytes=peak,
+        verifier_peak_rss_bytes=rss,
+        verifier_peak_rss_limit_bytes=rss_limit,
+        raw_bytes_per_token=raw_bpt,
+        compressed_bytes_per_token=compressed_bpt,
+        adaptive_record_count=adaptive_count,
+        adaptive_record_fraction=adaptive_count/token_count if token_count else 0.0,
+        max_effective_topk=max_eff,
+        rank_overflow_count=rank_overflow,
+        retained_reconstructable_bytes=retained,
+        minimum_reconstructable_bytes=minimum,
+        retention_floor_margin_bytes=margin,
+        verifier_reconstruction_seconds_mean=elapsed,
+        verifier_reconstruction_seconds_p50=elapsed,
+        verifier_reconstruction_seconds_p95=elapsed,
+        tokens_reconstructed_per_second=tps,
+        chunks_reconstructed=chunks,
+        span_events_overlaid=spans,
+        adaptive_records_reconstructed=adaptive_count,
+        budget_status=budget_status,
+        verification_outcome=outcome,
+        failure_codes=sorted(set(failure_codes), key=str),
+        errors=errors,
+        strict_profile_budget=strict_profile_budget,
+        minimum_budget_token_count=prof.minimum_budget_token_count,
+        ceiling_bytes_per_token=prof.ceiling_bytes_per_token,
+        work_certificate=cert,
+        retention_state="LOCAL_PASS",
+    )
