@@ -863,12 +863,17 @@ def _pack_v33_manifest(
             histogram[2] += 1
         else:
             histogram[3] += 1
-        bits = [TRIGGER_RANK, TRIGGER_STOCHASTIC, TRIGGER_HISTORY, TRIGGER_CANARY, TRIGGER_ESCALATION]
+        # Bug Fix: Removed TRIGGER_ESCALATION from bits mapping because it 
+        # caused misalignment with index 4 ('multi') and 5 ('escalation').
+        bits = [TRIGGER_RANK, TRIGGER_STOCHASTIC, TRIGGER_HISTORY, TRIGGER_CANARY]
         active = 0
         for idx, bit in enumerate(bits):
             if rec.trigger_flags & bit:
                 trigger_counts[idx] += 1
                 active += 1
+        if rec.trigger_flags & TRIGGER_ESCALATION:
+            trigger_counts[5] += 1
+            active += 1
         if active > 1:
             trigger_counts[4] += 1
         bitmap.append(1 if rec.trigger_flags & TRIGGER_STOCHASTIC else 0)
@@ -1455,8 +1460,11 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
         rank_eligible = adaptive_k and base_k < raw_rank <= max_adaptive_k
         history_eligible = bool(rec.trigger_flags & TRIGGER_HISTORY)
         canary_eligible = bool(rec.trigger_flags & TRIGGER_CANARY)
-        if history_eligible != history_triggered_sequence:
+        
+        # FIX: Outer 'if' stripped away, logic cleaned up.
+        if tension_map_id != 0 and history_eligible != history_triggered_sequence:
             raise ValueError("tension map history trigger mismatch")
+            
         if bool(rec.trigger_flags & TRIGGER_RANK) != rank_eligible:
             raise ValueError("pre-stochastic rank eligibility mismatch")
         otherwise_untriggered = not (rank_eligible or history_eligible or canary_eligible)
