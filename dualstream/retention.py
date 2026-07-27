@@ -25,8 +25,8 @@ def compute_minimum_reconstructable_bytes(token_count: int, effective_topks: lis
 
 
 def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-CI-Lite") -> EvidenceBudgetSummary:
-    data = artifact if isinstance(artifact, (bytes, bytearray)) else open(str(artifact), "rb").read()
-    decoded = decode_compact_sequence(bytes(data))
+    raw = artifact if isinstance(artifact, (bytes, bytearray)) else open(str(artifact), "rb").read()
+    decoded = decode_compact_sequence(bytes(raw))
     prof = get_evidence_profile(profile)
     token_count = len(decoded["tokens"])
     if token_count <= 0:
@@ -35,7 +35,7 @@ def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-C
     header = decoded["header"]
     manifest = decoded.get("manifest")
     if manifest is not None and getattr(header, "schema_version", None) == 0x0303:
-        floor = compute_v33_local_minimum_reconstructable_bytes(bytes(data))
+        floor = compute_v33_local_minimum_reconstructable_bytes(raw)
         if int(manifest.minimum_reconstructable_bytes) != floor:
             raise ValueError("V3.3 minimum reconstructable byte floor mismatch")
     else:
@@ -43,8 +43,8 @@ def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-C
         meta_len = len(__import__("json").dumps(decoded.get("meta", {}), sort_keys=True, separators=(",", ":")).encode())
         chunk_count = (token_count + int(header.chunk_token_capacity) - 1) // int(header.chunk_token_capacity)
         floor = compute_minimum_reconstructable_bytes(token_count, eff, prof.profile_id.value, chunk_count=chunk_count, profile_metadata_bytes=meta_len, fallback_count=fallback_count, span_count=len(decoded.get("spans", [])), profile_id_bytes=len(header.profile_id.encode()))
-    raw = len(data)
-    return EvidenceBudgetSummary(prof.profile_id.value, token_count, raw, raw / token_count, prof.ceiling_bytes_per_token, floor, raw - floor, raw)
+    raw_len = len(raw)
+    return EvidenceBudgetSummary(prof.profile_id.value, token_count, raw_len, raw_len / token_count, prof.ceiling_bytes_per_token, floor, raw_len - floor, raw_len)
 
 
 def assert_evidence_budget(summary: EvidenceBudgetSummary) -> None:
