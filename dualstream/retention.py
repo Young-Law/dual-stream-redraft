@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from .compact_evidence import decode_compact_sequence, _HEADER, _CHUNK, _TOKEN, _TOPK, _SPAN
+from .compact_evidence import decode_compact_sequence, compute_v33_local_minimum_reconstructable_bytes, _HEADER, _CHUNK, _TOKEN, _TOPK, _SPAN
 from .evidence_profile import get_evidence_profile
 
 
@@ -32,11 +32,17 @@ def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-C
     if token_count <= 0:
         raise ValueError("summary-only artifact has no reconstructable token evidence")
     eff = [int(t.effective_topk) for t in decoded["tokens"]]
-    fallback_count = sum(1 for t in decoded["tokens"] if int(getattr(t, "chosen_rank", 255)) == 255)
-    meta_len = len(__import__("json").dumps(decoded.get("meta", {}), sort_keys=True, separators=(",", ":")).encode())
     header = decoded["header"]
-    chunk_count = (token_count + int(header.chunk_token_capacity) - 1) // int(header.chunk_token_capacity)
-    floor = compute_minimum_reconstructable_bytes(token_count, eff, prof.profile_id.value, chunk_count=chunk_count, profile_metadata_bytes=meta_len, fallback_count=fallback_count, span_count=len(decoded.get("spans", [])), profile_id_bytes=len(header.profile_id.encode()))
+    manifest = decoded.get("manifest")
+    if manifest is not None and getattr(header, "schema_version", None) == 0x0303:
+        floor = compute_v33_local_minimum_reconstructable_bytes(bytes(data))
+        if int(manifest.minimum_reconstructable_bytes) != floor:
+            raise ValueError("V3.3 minimum reconstructable byte floor mismatch")
+    else:
+        fallback_count = sum(1 for t in decoded["tokens"] if int(getattr(t, "chosen_rank", 255)) == 255)
+        meta_len = len(__import__("json").dumps(decoded.get("meta", {}), sort_keys=True, separators=(",", ":")).encode())
+        chunk_count = (token_count + int(header.chunk_token_capacity) - 1) // int(header.chunk_token_capacity)
+        floor = compute_minimum_reconstructable_bytes(token_count, eff, prof.profile_id.value, chunk_count=chunk_count, profile_metadata_bytes=meta_len, fallback_count=fallback_count, span_count=len(decoded.get("spans", [])), profile_id_bytes=len(header.profile_id.encode()))
     raw = len(data)
     return EvidenceBudgetSummary(prof.profile_id.value, token_count, raw, raw / token_count, prof.ceiling_bytes_per_token, floor, raw - floor, raw)
 
@@ -51,3 +57,35 @@ def assert_retention_floor(summary: EvidenceBudgetSummary) -> None:
         raise ValueError("retained compact evidence is below the reconstructable floor")
     if summary.token_count <= 0:
         raise ValueError("summary-only artifact has no reconstructable token evidence")
+
+
+@dataclass(frozen=True)
+class RetentionRequirement:
+    artifact_content_hash: str
+    chunk_merkle_root: str
+    minimum_reconstructable_bytes: int
+    profile_hash: str
+    schema_hash: str
+    required_retention_class: str
+    not_before: float
+    retain_until: float
+    allowed_transforms: str
+    validation_policy_id: str
+    issuer_id: str
+    signature: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RetentionReceipt:
+    retention_requirement_hash: str
+    storage_object_id: str
+    storage_object_version: str
+    persisted_content_hash: str
+    verified_reconstructable_bytes: int
+    validation_time: float
+    retain_until: float
+    storage_class: str
+    protection_flags: str
+    validator_id: str
+    receipt_expiry: float
+    signature: dict[str, str]

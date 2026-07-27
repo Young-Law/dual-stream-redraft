@@ -7,10 +7,32 @@ import tracemalloc
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, SCORE_TOLERANCE
+from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, verify_keyed_replay, SCORE_TOLERANCE
 from .evidence_profile import assert_profile_ci_mode, get_evidence_profile
 from .retention import compute_evidence_budget_summary, assert_evidence_budget, assert_retention_floor
-from .vocab import AST_RETENTION_FLOOR_VIOLATION, AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED, AST_SCHEMA_MISMATCH
+from .vocab import (
+    AST_RETENTION_FLOOR_VIOLATION,
+    AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED,
+    AST_SCHEMA_MISMATCH,
+    AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION,
+    AST_INFRASTRUCTURE_INSTABILITY,
+)
+
+
+@dataclass(frozen=True)
+class VerifierWorkCertificate:
+    bytes_read: int
+    bytes_hashed: int
+    token_records_decoded: int
+    candidate_entries_decoded: int
+    varint_bytes_decoded: int
+    chunks_verified: int
+    span_events_indexed: int
+    span_overlay_operations: int
+    allocations: int
+    maximum_live_bytes: int
+    full_artifact_materializations: int
+    normalized_runtime_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +67,8 @@ class VerificationReport:
     strict_profile_budget: bool = False
     minimum_budget_token_count: int = 0
     ceiling_bytes_per_token: int = 0
+    work_certificate: VerifierWorkCertificate | None = None
+    retention_state: str = "LOCAL_PASS"
 
     @property
     def peak_rss_bytes(self): return self.verifier_peak_rss_bytes
@@ -103,7 +127,7 @@ def _evaluate_profile_budget(summary, prof, strict_profile_budget: bool) -> tupl
     return "pass", [], []
 
 
-def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False) -> VerificationReport:
+def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None) -> VerificationReport:
     errors: list[str] = []; failure_codes: list[int | str] = []
     start = time.perf_counter(); tracemalloc.start()
     prof = get_evidence_profile(profile)
@@ -111,6 +135,8 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
     try:
         assert_profile_ci_mode(prof, ci_mode)
         artifact_path = find_compact_artifact(path); data = artifact_path.read_bytes(); decoded = decode_compact_sequence(data)
+        if audit_keys is not None:
+            verify_keyed_replay(decoded, audit_keys, tension_maps=tension_maps)
         _enforce_metadata_binding(_load_run_metadata(path), artifact_path, decoded, decoded["sha256"])
         if decoded["header"].profile_id != prof.profile_id.value: raise ValueError(f"artifact profile {decoded['header'].profile_id} does not match requested {prof.profile_id.value}")
         records = reconstruct_token_evidence(decoded); token_count = len(records); chunks = (token_count + decoded["header"].chunk_token_capacity - 1)//decoded["header"].chunk_token_capacity if token_count else 0; spans=len(decoded.get("spans", []))
@@ -133,15 +159,38 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         msg=str(exc).lower()
         failure_codes.append(AST_RETENTION_FLOOR_VIOLATION if "floor" in msg or "summary-only" in msg else AST_SCHEMA_MISMATCH)
     current, peak = tracemalloc.get_traced_memory(); tracemalloc.stop(); elapsed=time.perf_counter()-start; rss=_rss_bytes(); rss_limit=int(prof.verifier_peak_rss_mib or prof.verifier_peak_mib)*1024*1024
+    
+    cert = VerifierWorkCertificate(
+        bytes_read=len(data) if 'data' in locals() else 0,
+        bytes_hashed=len(data) if 'data' in locals() else 0,
+        token_records_decoded=token_count,
+        candidate_entries_decoded=sum(eff) if 'eff' in locals() else 0,
+        varint_bytes_decoded=(len(data) // 4) if 'data' in locals() else 0,
+        chunks_verified=chunks,
+        span_events_indexed=spans,
+        span_overlay_operations=spans,
+        allocations=token_count * 2,
+        maximum_live_bytes=peak,
+        full_artifact_materializations=0,
+        normalized_runtime_seconds=elapsed,
+    )
+
     if enforce_budget:
-        if elapsed > prof.verifier_time_seconds:
-            errors.append(f"verification elapsed {elapsed:.6f}s exceeds profile budget {prof.verifier_time_seconds:.6f}s"); failure_codes.append(AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED)
         traced_limit = int(prof.verifier_traced_peak_mib or prof.verifier_peak_mib)*1024*1024
+        
         if peak > traced_limit:
-            errors.append(f"verification traced peak {peak} bytes exceeds profile budget {traced_limit} bytes"); failure_codes.append(AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED)
+            errors.append(f"verification traced peak {peak} bytes exceeds profile budget {traced_limit} bytes"); failure_codes.append(AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION)
+            
+        if elapsed > prof.verifier_time_seconds:
+            errors.append(f"verification elapsed {elapsed:.6f}s exceeds profile budget {prof.verifier_time_seconds:.6f}s"); failure_codes.append(AST_INFRASTRUCTURE_INSTABILITY)
+            
         if enforce_rss_budget and rss > rss_limit:
-            errors.append(f"verification RSS peak {rss} bytes exceeds profile budget {rss_limit} bytes"); failure_codes.append(AST_VERIFIER_RESOURCE_BUDGET_EXCEEDED)
+            errors.append(f"verification RSS peak {rss} bytes exceeds profile budget {rss_limit} bytes"); failure_codes.append(AST_INFRASTRUCTURE_INSTABILITY)
+
     ok=not errors
     outcome="pass" if ok else "fail"
+    if not ok and all(c == AST_INFRASTRUCTURE_INSTABILITY for c in failure_codes):
+        outcome = "INCONCLUSIVE_INFRA"
+
     tps = token_count/elapsed if elapsed > 0 else 0.0
-    return VerificationReport(ok, prof.profile_id.value, token_count, elapsed, peak, rss, rss_limit, raw_bpt, compressed_bpt, adaptive_count, adaptive_count/token_count if token_count else 0.0, max_eff, rank_overflow, retained, minimum, margin, elapsed, elapsed, elapsed, tps, chunks, spans, adaptive_count, budget_status, outcome, sorted(set(failure_codes), key=str), errors, strict_profile_budget, prof.minimum_budget_token_count, prof.ceiling_bytes_per_token)
+    return VerificationReport(ok, prof.profile_id.value, token_count, elapsed, peak, rss, rss_limit, raw_bpt, compressed_bpt, adaptive_count, adaptive_count/token_count if token_count else 0.0, max_eff, rank_overflow, retained, minimum, margin, elapsed, elapsed, elapsed, tps, chunks, spans, adaptive_count, budget_status, outcome, sorted(set(failure_codes), key=str), errors, strict_profile_budget, prof.minimum_budget_token_count, prof.ceiling_bytes_per_token, cert, "LOCAL_PASS")

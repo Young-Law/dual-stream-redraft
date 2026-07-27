@@ -71,3 +71,22 @@ def test_structural_failure_budget_status(tmp_path):
     report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
     assert not report.ok
     assert report.budget_status == "not_evaluated_due_to_structural_failure"
+
+def test_infrastructure_instability_yields_inconclusive_infra(tmp_path, monkeypatch):
+    from dataclasses import replace
+    import dualstream.verifier as verifier
+    from dualstream.evidence_profile import get_evidence_profile
+
+    p = tmp_path / "compact_evidence.dsae"
+    p.write_bytes(encode_compact_sequence([{"chosen_id": i, "topk_ids": [i, i+1, i+2], "topk_scores": [.7,.2,.1]} for i in range(20)]))
+    
+    # Tiny time budget, but large traced memory budget so it only fails on elapsed time.
+    tiny = replace(get_evidence_profile("DSA-CI-Lite"), verifier_time_seconds=0.0, verifier_traced_peak_mib=1024, verifier_peak_mib=1024)
+    monkeypatch.setattr(verifier, "get_evidence_profile", lambda _profile: tiny)
+    monkeypatch.setattr(verifier, "assert_profile_ci_mode", lambda _profile, _ci_mode: tiny)
+    
+    report = verifier.verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
+    assert not report.ok
+    assert report.verification_outcome == "INCONCLUSIVE_INFRA"
+    assert 524 in report.failure_codes # AST_INFRASTRUCTURE_INSTABILITY
+    assert 523 not in report.failure_codes # AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION

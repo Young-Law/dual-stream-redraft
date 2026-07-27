@@ -66,6 +66,11 @@ class GenerationConfig:
     adaptive_k: bool = False
     max_adaptive_k: Optional[int] = None
     chunk_token_capacity: int = 256
+    compact_wire_version: int = 0x0303
+    audit_key: Optional[bytes] = None
+    audit_key_id: int = 0
+    stochastic_rate_ppm: int = 0
+    benchmark_id: str = ""
 
 
 class DualStreamGenerator:
@@ -427,7 +432,19 @@ class DualStreamGenerator:
         compact_bytes = None
         if cfg.compact_evidence:
             from .compact_evidence import encode_compact_sequence
-            compact_bytes = encode_compact_sequence(frames, profile=cfg.evidence_profile, sequence_id=prompt_nonce, chunk_token_capacity=cfg.chunk_token_capacity, adaptive_k=cfg.adaptive_k, max_adaptive_k=cfg.max_adaptive_k)
+            compact_bytes = encode_compact_sequence(
+                frames,
+                profile=cfg.evidence_profile,
+                sequence_id=prompt_nonce,
+                chunk_token_capacity=cfg.chunk_token_capacity,
+                adaptive_k=cfg.adaptive_k,
+                max_adaptive_k=cfg.max_adaptive_k,
+                wire_version=cfg.compact_wire_version,
+                audit_key=cfg.audit_key,
+                audit_key_id=cfg.audit_key_id,
+                stochastic_rate_ppm=cfg.stochastic_rate_ppm,
+                benchmark_id=cfg.benchmark_id,
+            )
 
         return {
             "prompt_nonce": prompt_nonce,

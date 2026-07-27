@@ -246,3 +246,19 @@ Compact evidence decoding now dispatches by wire version before interpreting lay
 - `not_evaluated_short_fixture`: the artifact was shorter than the profile's canonical token-count floor and `--strict-profile-budget` was not set; structural, integrity, metadata, reconstruction, and retention-floor checks still ran.
 - `not_evaluated_disabled`: profile budget checks were disabled by the caller.
 - `not_evaluated_due_to_structural_failure`: decode, metadata binding, or structural verification failed before profile byte-budget evaluation could be computed.
+
+
+## DSA v2.10 Phase 1 status
+
+The repository implements the compact binary V3.3 evidence wire foundation, integrated model-generation path, legacy decoding compatibility, canonical artifact hashing, and authorized keyed-selection replay. Portable verifier governance, signed tension-map governance, and complete end-to-end retention assurance remain under implementation.
+
+V3.3 (`0x0303`) compact evidence starts with the existing compact-family magic and an explicit binary version field. V3.1 (`0x0301`) and V3.2 (`0x0302`) artifacts remain readable through version-specific legacy decoders and are not reinterpreted as V3.3.
+
+New compact-evidence generation defaults to V3.3 through `compact_wire_version=0x0303`; V3.2 remains available through an explicit compatibility option. The software-only implementation does not claim DSA-P assurance, which requires device-bound evidence and valid independent retention receipts.
+
+Run local Phase 1 conformance with:
+
+```bash
+python -m dualstream.cli conformance v2.10
+python -m pytest tests/test_v210_conformance.py
+```

@@ -121,6 +121,7 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
             "adaptive_k": getattr(cfg, "adaptive_k", False),
             "max_adaptive_k": getattr(cfg, "max_adaptive_k", None),
             "chunk_token_capacity": getattr(cfg, "chunk_token_capacity", 256),
+            "compact_wire_version": getattr(cfg, "compact_wire_version", 0x0303),
         },
     }
     if compact_bytes is not None:
@@ -195,6 +196,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         adaptive_k=getattr(args, "adaptive_k", False),
         max_adaptive_k=getattr(args, "max_adaptive_k", None),
         chunk_token_capacity=getattr(args, "chunk_token_capacity", 256),
+        compact_wire_version=int(getattr(args, "compact_wire_version", "0x0303"), 0),
     )
 
     if getattr(cfg, "compact_evidence", False):
@@ -313,6 +315,51 @@ def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
         print(f"FAIL {status}: {detail}")
     return 0 if report.ok else 2
 
+
+def cmd_conformance(args: argparse.Namespace) -> int:
+    from .compact_evidence import VERSION_V33, decode_compact_sequence, encode_compact_sequence, verify_keyed_replay
+
+    key = b"codex-v210-conformance-key"
+    tokens = []
+    for i in range(128):
+        ids = list(range(i * 16, i * 16 + 10))
+        chosen = ids[6] if i % 17 == 0 else ids[0]
+        tokens.append({
+            "chosen_id": chosen,
+            "topk_ids": ids,
+            "topk_scores": [1.0 - (j / 20) for j in range(10)],
+            "trigger_flags": 4 if i == 11 else 0,
+        })
+    artifact = encode_compact_sequence(
+        tokens,
+        profile="DSA-CI-Lite",
+        sequence_id=210,
+        adaptive_k=True,
+        wire_version=VERSION_V33,
+        audit_key=key,
+        audit_key_id=7,
+        stochastic_rate_ppm=5000,
+    )
+    decoded = decode_compact_sequence(artifact)
+    verify_keyed_replay(decoded, {7: key})
+    summary = {
+        "wire_version": "0x0303",
+        "outcome": "LOCAL_PASS",
+        "tokens": decoded["header"].token_count,
+        "chunks": decoded["manifest"].chunk_count,
+        "raw_bytes_per_token": len(artifact) / decoded["header"].token_count,
+    }
+    if args.json:
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        print(
+            "DSA v2.10 Phase 1 conformance: PASS "
+            f"({summary['tokens']} tokens, {summary['chunks']} chunks, "
+            f"wire {summary['wire_version']})"
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="dualstream",
@@ -364,6 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--adaptive-k", action="store_true")
     g.add_argument("--max-adaptive-k", type=int, default=None)
     g.add_argument("--chunk-token-capacity", type=int, default=256)
+    g.add_argument("--compact-wire-version", default="0x0303", choices=["0x0302", "0x0303"])
 
     g.set_defaults(func=cmd_generate)
 
@@ -375,6 +423,11 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--strict-profile-budget", action="store_true")
     vb.add_argument("--enforce-rss-budget", action="store_true")
     vb.set_defaults(func=cmd_verify_evidence_budget)
+
+    conf = sub.add_parser("conformance", help="Run deterministic DSA conformance checks")
+    conf.add_argument("version", choices=["v2.10"])
+    conf.add_argument("--json", action="store_true")
+    conf.set_defaults(func=cmd_conformance)
 
     def add_solver_flags(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--max-program-depth", type=int, default=2)

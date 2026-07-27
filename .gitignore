@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+venv/
+
+# Generated DSA artifacts
+*.dsae
+*.bin
+results/raw/
+results/summaries/
+results/tables/
+results/figures/
+artifacts/
+tmp/
+
+# Allow source-controlled textual fixture definitions
+!tests/fixtures/**/*.json
+!tests/fixtures/**/*.yaml
+!tests/fixtures/**/*.yml
+!tests/fixtures/**/*.txt
+
+# Packaging
+*.egg-info/
+
+.gemini/
+gha-creds-*.json
