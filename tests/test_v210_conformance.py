@@ -149,7 +149,7 @@ def test_malformed_truncated_corrupt_and_reordered_v33_rejected():
     with pytest.raises(ValueError):
         decode_compact_sequence(mutate(artifact, 30, 0xFF))
 
-    header_size = 197
+    header_size = _HEADER_V33.size
     metadata_len = struct.unpack_from("<H", artifact, header_size - 8)[0]
     chunk_offset = header_size + 32 + metadata_len
     corrupt_chunk = mutate(artifact, chunk_offset + _CHUNK_V33.size + 1, 0x01)
@@ -165,7 +165,7 @@ def test_missing_duplicate_token_records_rejected():
     artifact = encode_compact_sequence(rows(2, 3), wire_version=VERSION_V33, adaptive_k=False)
     decoded = decode_compact_sequence(artifact)
     assert len(decoded["tokens"]) == 2
-    header_size = 197
+    header_size = _HEADER_V33.size
     metadata_len = struct.unpack_from("<H", artifact, header_size - 8)[0]
     chunk_offset = header_size + 32 + metadata_len
     missing = bytearray(artifact)
@@ -485,7 +485,7 @@ def test_keyed_replay_rejects_forged_stochastic_exemptions_and_preserves_multi_t
     selected = next(t for t in decoded["tokens"] if t.trigger_flags & TRIGGER_STOCHASTIC and not t.trigger_flags & TRIGGER_RANK)
     for forged in (TRIGGER_HISTORY, TRIGGER_CANARY, TRIGGER_RANK):
         tampered = copy.deepcopy(decoded)
-        tampered["tokens"][selected.token_index] = selected.__class__(selected.token_index, selected.chosen_id, selected.topk_ids, selected.topk_scores, selected.effective_topk, selected.chosen_rank, (selected.trigger_flags & ~TRIGGER_STOCHASTIC) | forged, selected.record_flags)
+        tampered["tokens"][selected.token_index] = selected.__class__(selected.token_index, selected.chosen_id, selected.topk_ids, selected.topk_scores, selected.effective_topk, selected.chosen_r[...]
         with pytest.raises(ValueError, match="eligibility|replay"):
             verify_keyed_replay(tampered, {3: KEY})
 
@@ -496,7 +496,7 @@ def test_keyed_replay_rejects_forged_stochastic_exemptions_and_preserves_multi_t
     verify_keyed_replay(valid_multi, {3: KEY})
     bad_multi = copy.deepcopy(valid_multi)
     rec = bad_multi["tokens"][0]
-    bad_multi["tokens"][0] = rec.__class__(rec.token_index, rec.chosen_id, rec.topk_ids, rec.topk_scores, rec.effective_topk, rec.chosen_rank, rec.trigger_flags & ~TRIGGER_HISTORY, rec.record_flags)
+    bad_multi["tokens"][0] = rec.__class__(rec.token_index, rec.chosen_id, rec.topk_ids, rec.topk_scores, rec.effective_topk, rec.chosen_rank, rec.trigger_flags & ~TRIGGER_HISTORY, rec.record_fla[...]
     with pytest.raises(ValueError, match="eligibility"):
         verify_keyed_replay(bad_multi, {3: KEY})
 
@@ -605,7 +605,7 @@ def test_profile_substitution_reaches_keyed_commitment_check():
 
 
 def test_v33_retention_floor_is_recomputed_locally_and_manifest_must_match():
-    artifact = encode_compact_sequence(rows(9, 12), wire_version=VERSION_V33, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=1_000_000, spans=[{"start_token": 0, "end_token": 2, "signal_id": 7, "score": 0.5, "provenance_id": 4, "evaluator_id": 99}])
+    artifact = encode_compact_sequence(rows(9, 12), wire_version=VERSION_V33, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=1_000_000, spans=[{"start_token": 0, "end_token": 2, "signal_id": 1, "score": 0.5, "provenance_id": 2}])
     decoded = decode_compact_sequence(artifact)
     summary = compute_evidence_budget_summary(artifact, "DSA-CI-Lite")
     assert summary.minimum_reconstructable_bytes == decoded["manifest"].minimum_reconstructable_bytes == len(artifact)
