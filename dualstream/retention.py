@@ -18,8 +18,9 @@ class EvidenceBudgetSummary:
     compressed_bytes_per_token: float | None = None
 
 
-def compute_minimum_reconstructable_bytes(token_count: int, effective_topks: list[int], profile: str = "DSA-CI-Lite", *, chunk_count: int = 1, profile_metadata_bytes: int = 0, fallback_count: int = 0, span_count: int = 0, profile_id_bytes: int = 0) -> int:
-    get_evidence_profile(profile)
+def compute_minimum_reconstructable_bytes(token_count: int, effective_topks: list[int], profile: str = "DSA-CI-Lite", *, chunk_count: int = 1, profile_metadata_bytes: int = 0, fallback_count: int = 0, span_count: int = 0) -> int:
+    prof = get_evidence_profile(profile)
+    profile_id_bytes = len(prof.profile_id.value)
     token_floor = sum(_TOKEN.size + max(0, int(k)) * _TOPK.size for k in effective_topks[:token_count])
     return _HEADER.size + profile_id_bytes + profile_metadata_bytes + chunk_count * _CHUNK.size + token_floor + fallback_count * 4 + span_count * _SPAN.size
 
@@ -35,14 +36,14 @@ def compute_evidence_budget_summary(artifact: bytes | str, profile: str = "DSA-C
     header = decoded["header"]
     manifest = decoded.get("manifest")
     if manifest is not None and getattr(header, "schema_version", None) == 0x0303:
-        floor = compute_v33_local_minimum_reconstructable_bytes(raw)
+        floor = compute_v33_local_minimum_reconstructable_bytes(bytes(raw))
         if int(manifest.minimum_reconstructable_bytes) != floor:
             raise ValueError("V3.3 minimum reconstructable byte floor mismatch")
     else:
         fallback_count = sum(1 for t in decoded["tokens"] if int(getattr(t, "chosen_rank", 255)) == 255)
         meta_len = len(__import__("json").dumps(decoded.get("meta", {}), sort_keys=True, separators=(",", ":")).encode())
         chunk_count = (token_count + int(header.chunk_token_capacity) - 1) // int(header.chunk_token_capacity)
-        floor = compute_minimum_reconstructable_bytes(token_count, eff, prof.profile_id.value, chunk_count=chunk_count, profile_metadata_bytes=meta_len, fallback_count=fallback_count, span_count=len(decoded.get("spans", [])), profile_id_bytes=len(header.profile_id.encode()))
+        floor = compute_minimum_reconstructable_bytes(token_count, eff, prof.profile_id.value, chunk_count=chunk_count, profile_metadata_bytes=meta_len, fallback_count=fallback_count, span_count=len(decoded.get("spans", [])))
     raw_len = len(raw)
     return EvidenceBudgetSummary(prof.profile_id.value, token_count, raw_len, raw_len / token_count, prof.ceiling_bytes_per_token, floor, raw_len - floor, raw_len)
 
