@@ -41,7 +41,11 @@ _TOKEN_V33_PREFIX = struct.Struct("<BBBB")
 _TOPK_V33 = struct.Struct("<IB")
 _SPAN_V33 = struct.Struct("<IIHBI")
 _SPAN_V33_EVAL = struct.Struct("<I")
-_MANIFEST_V33 = struct.Struct("<32s32s32sIII II IIII HHHHHH 32s B 32s")
+_MANIFEST_V33 = struct.Struct("<32s32s32sIIIIIIIII H H H H H H 32s B 32s")
+# Note: _MANIFEST_V33 struct formatting must align exactly with the packing/unpacking
+# used elsewhere. The original file compacted spacing; ensure that this struct's
+# field order matches the pack/unpack usage below.
+
 _TRIGGER_NAMES = ("rank", "stochastic", "history", "canary", "multi", "escalation")
 
 TRIGGER_RANK = 0x01
@@ -118,7 +122,8 @@ def quantize_score(score: float) -> int:
 
 
 def dequantize_score(raw: int) -> float:
-    return int(raw) / SCORE_SCALE
+    # Ensure float result (explicit)
+    return float(raw) / SCORE_SCALE
 
 
 def _sha256(data: bytes) -> bytes:
@@ -167,7 +172,8 @@ def choose_effective_topk(
         rank = len(candidate_ids) + 1
     if rank <= base:
         return base
-    return min(max(int(max_adaptive_k), base), max(rank, base))
+    # take the observed rank (but at least base), and cap to the configured maximum
+    return min(int(max_adaptive_k), max(rank, base))
 
 
 def _normalise_tokens(
@@ -240,6 +246,7 @@ def keyed_sample_selected(
     value = int.from_bytes(hmac.new(key, context, hashlib.sha256).digest()[:8], "big")
     return value % 1_000_000 < int(rate_ppm)
 
+
 def audit_selection_commitment(
     key: bytes,
     *,
@@ -265,6 +272,7 @@ def audit_selection_commitment(
         f"\0{int(canary_eval)}"
     ).encode("utf-8")
     return hmac.new(key, public, hashlib.sha256).digest()
+
 
 def _commit_identity(records: list[CompactTokenEvidenceV3], base_k: int) -> str:
     h = hashlib.sha256()
@@ -296,6 +304,7 @@ def _pre_stochastic_eligibility_digest(
         canary = bool(rec.trigger_flags & TRIGGER_CANARY)
         h.update(struct.pack("<IBBB", rec.token_index, int(rank), int(history), int(canary)))
     return h.hexdigest()
+
 
 def _apply_v33_triggers(
     records: list[CompactTokenEvidenceV3],
@@ -403,6 +412,7 @@ def _apply_v33_triggers(
             canary_eval=canary_eval,
         )
     return out, commitment, commit, eligibility_digest
+
 
 def encode_compact_sequence(
     tokens: Iterable[Any],
@@ -548,7 +558,6 @@ def _encode_v32_spans(spans: list[SignalSpanEventV3]) -> bytes:
     return bytes(body)
 
 
-
 def _normalise_v33_source_tokens(tokens: Iterable[Any], max_rank: int) -> list[CompactTokenEvidenceV3]:
     records: list[CompactTokenEvidenceV3] = []
     for index, item in enumerate(tokens):
@@ -573,6 +582,7 @@ def _normalise_v33_source_tokens(tokens: Iterable[Any], max_rank: int) -> list[C
         record_flags = int(item.get("record_flags", 0) if is_dict else getattr(item, "record_flags", 0))
         records.append(CompactTokenEvidenceV3(token_index, chosen_id, kept_ids, kept_scores, len(kept_ids), chosen_rank, trigger_flags, record_flags))
     return records
+
 
 def encode_compact_sequence_v33(
     tokens: Iterable[Any],
@@ -722,6 +732,7 @@ def encode_compact_sequence_v33(
     )
     return body_without_manifest + manifest
 
+
 def _v33_local_floor(token_count: int, chunk_count: int, span_count: int, metadata_len: int, chunk_payloads: list[bytes], span_body: bytes) -> int:
     return _HEADER_V33.size + 32 + int(metadata_len) + chunk_count * _CHUNK_V33.size + sum(len(p) for p in chunk_payloads) + len(span_body) + _MANIFEST_V33.size
 
@@ -851,32 +862,49 @@ def _pack_v33_manifest(
     records: list[CompactTokenEvidenceV3],
     retention_requirement_hash: bytes,
 ) -> bytes:
-    histogram = [0, 0, 0, 0]
-    trigger_counts = [0, 0, 0, 0, 0, 0]
+    # Build histogram bins: <=3, <=5, <=10, >10
+    histogram_counts = [0, 0, 0, 0]
+    # Trigger counts keyed by name for clarity
+    trigger_counts_map = {name: 0 for name in _TRIGGER_NAMES}
     bitmap = bytearray()
     for rec in records:
         if rec.effective_topk <= 3:
-            histogram[0] += 1
+            histogram_counts[0] += 1
         elif rec.effective_topk <= 5:
-            histogram[1] += 1
+            histogram_counts[1] += 1
         elif rec.effective_topk <= 10:
-            histogram[2] += 1
+            histogram_counts[2] += 1
         else:
-            histogram[3] += 1
-        # Bug Fix: Removed TRIGGER_ESCALATION from bits mapping because it 
-        # caused misalignment with index 4 ('multi') and 5 ('escalation').
-        bits = [TRIGGER_RANK, TRIGGER_STOCHASTIC, TRIGGER_HISTORY, TRIGGER_CANARY]
+            histogram_counts[3] += 1
+
         active = 0
-        for idx, bit in enumerate(bits):
+        # map the first four explicit triggers to named counters
+        mapping = [
+            ("rank", TRIGGER_RANK),
+            ("stochastic", TRIGGER_STOCHASTIC),
+            ("history", TRIGGER_HISTORY),
+            ("canary", TRIGGER_CANARY),
+        ]
+        for name, bit in mapping:
             if rec.trigger_flags & bit:
-                trigger_counts[idx] += 1
+                trigger_counts_map[name] += 1
                 active += 1
+
+        # escalation is treated separately
         if rec.trigger_flags & TRIGGER_ESCALATION:
-            trigger_counts[5] += 1
+            trigger_counts_map["escalation"] += 1
             active += 1
+
+        # multi (more than one active trigger)
         if active > 1:
-            trigger_counts[4] += 1
+            trigger_counts_map["multi"] += 1
+
+        # bitmap of stochastic flag presence for quick local checks
         bitmap.append(1 if rec.trigger_flags & TRIGGER_STOCHASTIC else 0)
+
+    # Pack trigger counts in the exact order expected by the manifest struct
+    trigger_counts_tuple = tuple(trigger_counts_map[name] for name in _TRIGGER_NAMES)
+
     return _MANIFEST_V33.pack(
         artifact_hash,
         header_hash,
@@ -886,8 +914,11 @@ def _pack_v33_manifest(
         span_count,
         raw_bytes,
         min_reconstructable,
-        *histogram,
-        *trigger_counts,
+        histogram_counts[0],
+        histogram_counts[1],
+        histogram_counts[2],
+        histogram_counts[3],
+        *trigger_counts_tuple,
         _sha256(bytes(bitmap)),
         0,
         retention_requirement_hash,
@@ -997,7 +1028,14 @@ def _decode_v31(buf: bytes) -> dict[str, Any]:
     if pos != len(buf):
         raise ValueError("unexpected trailing compact evidence bytes")
     digest = hashlib.sha256(buf).hexdigest()
-    return {"header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V31), "tokens": records, "spans": spans, "meta": meta, "sha256": digest, "raw_bytes": len(buf)}
+    return {
+        "header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V31),
+        "tokens": records,
+        "spans": spans,
+        "meta": meta,
+        "sha256": digest,
+        "raw_bytes": len(buf),
+    }
 
 
 def _decode_v32(buf: bytes) -> dict[str, Any]:
@@ -1018,7 +1056,19 @@ def _decode_v32(buf: bytes) -> dict[str, Any]:
     except Exception as exc:
         raise ValueError("malformed compact metadata") from exc
     pos += meta_len
-    required_meta = {"evidence_profile", "assurance_class", "signal_schema_id", "signal_schema_hash", "probe_pack_id", "probe_pack_hash", "decoder_control_flags", "adaptive_policy_id", "verifier_budget_id", "retention_floor_policy_id", "quantization_id"}
+    required_meta = {
+        "evidence_profile",
+        "assurance_class",
+        "signal_schema_id",
+        "signal_schema_hash",
+        "probe_pack_id",
+        "probe_pack_hash",
+        "decoder_control_flags",
+        "adaptive_policy_id",
+        "verifier_budget_id",
+        "retention_floor_policy_id",
+        "quantization_id",
+    }
     if not isinstance(meta, dict) or not required_meta.issubset(meta):
         raise ValueError("malformed compact metadata")
     if meta.get("profile_id", meta.get("evidence_profile")) != profile_id or meta.get("evidence_profile") != profile_id:
@@ -1029,7 +1079,14 @@ def _decode_v32(buf: bytes) -> dict[str, Any]:
     if pos != len(buf):
         raise ValueError("unexpected trailing compact evidence bytes")
     digest = hashlib.sha256(buf).hexdigest()
-    return {"header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V32), "tokens": records, "spans": spans, "meta": meta, "sha256": digest, "raw_bytes": len(buf)}
+    return {
+        "header": MonologueSequenceHeaderV3(seq, token_count, profile_id, base_k, max_k, cap, schema_version=VERSION_V32),
+        "tokens": records,
+        "spans": spans,
+        "meta": meta,
+        "sha256": digest,
+        "raw_bytes": len(buf),
+    }
 
 
 def _decode_v33(buf: bytes) -> dict[str, Any]:
@@ -1092,418 +1149,5 @@ def _decode_v33(buf: bytes) -> dict[str, Any]:
     except Exception as exc:
         raise ValueError("malformed V3.3 metadata") from exc
     if not isinstance(metadata, dict):
-        raise ValueError("V3.3 metadata must be an object")
-    if metadata.get("profile_id") != profile_id:
-        raise ValueError("V3.3 metadata profile declaration mismatch")
-
-    records: list[CompactTokenEvidenceV3] = []
-    chunks: list[EvidenceChunkV3] = []
-    chunk_payloads: list[bytes] = []
-    expected_start = 0
-    for expected_chunk in range(chunk_count):
-        if pos + _CHUNK_V33.size > len(buf):
-            raise ValueError("artifact is truncated in V3.3 chunk header")
-        chunk_fields = _CHUNK_V33.unpack_from(buf, pos)
-        pos += _CHUNK_V33.size
-        (
-            chunk_index,
-            first_token_index,
-            chunk_token_count,
-            chunk_flags,
-            chunk_base_topk,
-            max_effective_topk,
-            rank_count,
-            stochastic_count,
-            history_count,
-            canary_count,
-            payload_len,
-            chunk_crc32,
-            chunk_hash,
-        ) = chunk_fields
-        if chunk_index != expected_chunk or first_token_index != expected_start:
-            raise ValueError("compact chunks are missing or reordered")
-        if chunk_base_topk != base_topk or chunk_token_count > chunk_token_capacity:
-            raise ValueError("V3.3 chunk declaration mismatch")
-        payload = buf[pos:pos + payload_len]
-        pos += payload_len
-        if len(payload) != payload_len:
-            raise ValueError("artifact is truncated in V3.3 chunk payload")
-        if binascii.crc32(payload) & 0xFFFFFFFF != chunk_crc32 or _sha256(payload) != chunk_hash:
-            raise ValueError("compact chunk integrity check failed")
-        chunk_payloads.append(payload)
-        chunks.append(EvidenceChunkV3(chunk_index, first_token_index, chunk_token_count, chunk_crc32))
-        decoded_subset = _decode_v33_chunk_payload(payload, first_token_index, chunk_token_count, base_topk)
-        if any(rec.effective_topk > max_adaptive_rank for rec in decoded_subset):
-            raise ValueError("V3.3 token evidence exceeds declared maximum adaptive K")
-        if max((rec.effective_topk for rec in decoded_subset), default=base_topk) != max_effective_topk:
-            raise ValueError("V3.3 maximum effective top-k mismatch")
-        if sum(1 for rec in decoded_subset if rec.trigger_flags & TRIGGER_RANK) != rank_count:
-            raise ValueError("V3.3 rank trigger count mismatch")
-        if sum(1 for rec in decoded_subset if rec.trigger_flags & TRIGGER_STOCHASTIC) != stochastic_count:
-            raise ValueError("V3.3 stochastic trigger count mismatch")
-        if sum(1 for rec in decoded_subset if rec.trigger_flags & TRIGGER_HISTORY) != history_count:
-            raise ValueError("V3.3 history trigger count mismatch")
-        if sum(1 for rec in decoded_subset if rec.trigger_flags & TRIGGER_CANARY) != canary_count:
-            raise ValueError("V3.3 canary trigger count mismatch")
-        records.extend(decoded_subset)
-        expected_start += chunk_token_count
-    if len(records) != token_count:
-        raise ValueError("missing token evidence")
-
-    spans: list[SignalSpanEventV3] = []
-    for _ in range(span_count):
-        if pos + _SPAN_V33.size + 1 > len(buf):
-            raise ValueError("artifact is truncated in V3.3 span events")
-        start, end, signal_id, q_score, provenance_id = _SPAN_V33.unpack_from(buf, pos)
-        pos += _SPAN_V33.size
-        flags = struct.unpack_from("<B", buf, pos)[0]
-        pos += 1
-        evaluator_id = None
-        if flags & SPAN_HAS_EVALUATOR_ID:
-            if pos + _SPAN_V33_EVAL.size > len(buf):
-                raise ValueError("artifact is truncated in V3.3 span evaluator")
-            evaluator_id = _SPAN_V33_EVAL.unpack_from(buf, pos)[0]
-            pos += _SPAN_V33_EVAL.size
-        if flags & ~SPAN_HAS_EVALUATOR_ID:
-            raise ValueError("unknown V3.3 span flags")
-        if start >= end or end > token_count:
-            raise ValueError("sparse span is outside token range")
-        spans.append(SignalSpanEventV3(start, end, signal_id, dequantize_score(q_score), provenance_id, evaluator_id))
-
-    if pos + _MANIFEST_V33.size != len(buf):
-        raise ValueError("unexpected trailing or missing V3.3 manifest bytes")
-    manifest_start = pos
-    manifest_fields = _MANIFEST_V33.unpack_from(buf, manifest_start)
-    manifest = _manifest_from_fields(manifest_fields)
-    if manifest.token_count != token_count or manifest.chunk_count != chunk_count or manifest.span_event_count != span_count:
-        raise ValueError("V3.3 manifest count mismatch")
-    if manifest.sequence_header_hash != _sha256_hex(buf[:_HEADER_V33.size]):
-        raise ValueError("V3.3 sequence header hash mismatch")
-    if manifest.chunk_merkle_root != _merkle_root(chunk_payloads).hex():
-        raise ValueError("V3.3 chunk Merkle root mismatch")
-    preimage = buf[:manifest_start] + _manifest_with_zero_hash(buf[manifest_start:])
-    if manifest.artifact_content_hash != _sha256_hex(preimage):
-        raise ValueError("V3.3 artifact content hash mismatch")
-    if manifest.raw_evidence_bytes != len(buf):
-        raise ValueError("V3.3 raw evidence byte count mismatch")
-    local_floor = v33_minimum_reconstructable_bytes(
-        metadata_bytes=metadata_bytes,
-        chunks=chunks,
-        tokens=records,
-        spans=spans,
-    )
-    if manifest.minimum_reconstructable_bytes != local_floor:
-        raise ValueError("V3.3 minimum reconstructable byte floor mismatch")
-
-    return {
-        "header": MonologueSequenceHeaderV3(
-            sequence_id,
-            token_count,
-            profile_id,
-            base_topk,
-            max_adaptive_rank,
-            chunk_token_capacity,
-            schema_version=VERSION_V33,
-        ),
-        "tokens": records,
-        "spans": spans,
-        "meta": {
-            **metadata,
-            "audit_key_id": audit_key_id,
-            "audit_selection_commitment": audit_selection_commitment_bytes.hex(),
-            "tension_map_id": tension_map_id,
-            "tension_map_hash": tension_map_hash.hex(),
-            "commit_identity": metadata.get("commit_identity", ""),
-            "policy_version": adaptive_policy_id,
-            "stochastic_rate_ppm": stochastic_rate_ppm,
-            "benchmark_id": metadata.get("benchmark_id", ""),
-            "prompt_nonce": metadata.get("prompt_nonce", prompt_nonce),
-            "pre_stochastic_eligibility_digest": metadata.get("pre_stochastic_eligibility_digest", ""),
-            "header_prompt_nonce": prompt_nonce,
-        },
-        "manifest": manifest,
-        "sha256": hashlib.sha256(buf).hexdigest(),
-        "raw_bytes": len(buf),
-    }
-
-def v33_minimum_reconstructable_bytes(
-    *,
-    metadata_bytes: bytes,
-    chunks: list[EvidenceChunkV3],
-    tokens: list[CompactTokenEvidenceV3],
-    spans: list[SignalSpanEventV3],
-) -> int:
-    """Calculate the V3.3 floor solely from the decoded canonical wire layout."""
-    token_bytes = sum(
-        _TOKEN_V33_PREFIX.size
-        + (_TOPK_V33.size * rec.effective_topk)
-        + (4 if rec.record_flags & RECORD_HAS_FALLBACK_CHOSEN_ID else 0)
-        for rec in tokens
-    )
-    span_bytes = sum(
-        _SPAN_V33.size + 1 + (_SPAN_V33_EVAL.size if span.evaluator_id is not None else 0)
-        for span in spans
-    )
-    return (
-        _HEADER_V33.size
-        + 32  # metadata digest
-        + len(metadata_bytes)
-        + len(chunks) * _CHUNK_V33.size
-        + token_bytes
-        + span_bytes
-        + _MANIFEST_V33.size
-    )
-
-
-def _decode_v33_chunk_payload(payload: bytes, start: int, count: int, base_topk: int) -> list[CompactTokenEvidenceV3]:
-    records = []
-    pos = 0
-    for offset in range(count):
-        if pos + _TOKEN_V33_PREFIX.size > len(payload):
-            raise ValueError("malformed V3.3 token evidence")
-        delta, chosen_rank_raw, trigger_flags, record_flags = _TOKEN_V33_PREFIX.unpack_from(payload, pos)
-        pos += _TOKEN_V33_PREFIX.size
-        effective_topk = base_topk + delta
-        chosen_id = None
-        if record_flags & RECORD_HAS_FALLBACK_CHOSEN_ID:
-            if pos + 4 > len(payload):
-                raise ValueError("malformed V3.3 fallback chosen-id evidence")
-            chosen_id = struct.unpack_from("<I", payload, pos)[0]
-            pos += 4
-        ids = []
-        scores = []
-        for _ in range(effective_topk):
-            if pos + _TOPK_V33.size > len(payload):
-                raise ValueError("malformed V3.3 top-k evidence")
-            token_id, q_score = _TOPK_V33.unpack_from(payload, pos)
-            pos += _TOPK_V33.size
-            ids.append(token_id)
-            scores.append(dequantize_score(q_score))
-        if chosen_id is None:
-            chosen_rank = int(chosen_rank_raw)
-            if chosen_rank < 1 or chosen_rank > len(ids):
-                raise ValueError("V3.3 chosen rank is outside retained candidates")
-            chosen_id = ids[chosen_rank - 1]
-        else:
-            chosen_rank = ids.index(chosen_id) + 1 if chosen_id in ids else 255
-        records.append(
-            CompactTokenEvidenceV3(
-                token_index=start + offset,
-                chosen_id=chosen_id,
-                topk_ids=tuple(ids),
-                topk_scores=tuple(scores),
-                effective_topk=effective_topk,
-                chosen_rank=chosen_rank,
-                trigger_flags=trigger_flags,
-                record_flags=record_flags,
-            )
-        )
-    if pos != len(payload):
-        raise ValueError("malformed V3.3 chunk payload")
-    return records
-
-
-def _manifest_from_fields(fields: tuple[Any, ...]) -> EvidenceManifestV33:
-    histogram = {3: fields[8], 5: fields[9], 10: fields[10], 255: fields[11]}
-    trigger_counts = dict(zip(_TRIGGER_NAMES, fields[12:18]))
-    return EvidenceManifestV33(
-        artifact_content_hash=fields[0].hex(),
-        sequence_header_hash=fields[1].hex(),
-        chunk_merkle_root=fields[2].hex(),
-        token_count=fields[3],
-        chunk_count=fields[4],
-        span_event_count=fields[5],
-        raw_evidence_bytes=fields[6],
-        minimum_reconstructable_bytes=fields[7],
-        effective_k_histogram=histogram,
-        trigger_count_by_reason=trigger_counts,
-        audit_selection_digest=fields[18].hex(),
-        local_audit_outcome="LOCAL_PASS" if fields[19] == 0 else "REVIEW",
-        retention_requirement_hash=fields[20].hex(),
-    )
-
-
-def _manifest_with_zero_hash(manifest: bytes) -> bytes:
-    return ZERO_HASH + manifest[32:]
-
-
-def decode_compact_sequence(buf: bytes) -> dict[str, Any]:
-    if len(buf) < PREFIX.size:
-        raise ValueError("malformed compact evidence header")
-    magic, version = PREFIX.unpack_from(buf, 0)
-    if magic != MAGIC:
-        raise ValueError("compact evidence schema mismatch")
-    if version == VERSION_V31:
-        return _decode_v31(buf)
-    if version == VERSION_V32:
-        return _decode_v32(buf)
-    if version == VERSION_V33:
-        return _decode_v33(buf)
-    raise ValueError(f"unsupported compact evidence version 0x{version:04x}")
-
-
-def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, bytes], tension_maps: dict[int, Any] | None = None) -> None:
-    data = decode_compact_sequence(decoded) if isinstance(decoded, (bytes, bytearray)) else decoded
-    if data["header"].schema_version != VERSION_V33:
-        return
-    meta = data.get("meta", {})
-    if not isinstance(meta, dict):
-        raise ValueError("V3.3 metadata must be an object")
-
-    def require_string(name: str, *, hex_digest: bool = False) -> str:
-        value = meta.get(name)
-        if not isinstance(value, str):
-            raise ValueError(f"authenticated metadata {name} must be a string")
-        if hex_digest and (len(value) != 64 or any(c not in "0123456789abcdef" for c in value)):
-            raise ValueError(f"authenticated metadata {name} must be a canonical SHA-256 hex digest")
-        return value
-
-    def require_int(name: str, *, minimum: int = 0, maximum: int | None = None) -> int:
-        value = meta.get(name)
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"authenticated metadata {name} must be an integer")
-        if value < minimum or (maximum is not None and value > maximum):
-            raise ValueError(f"authenticated metadata {name} is out of range")
-        return value
-
-    def require_bool(name: str) -> bool:
-        value = meta.get(name)
-        if type(value) is not bool:
-            raise ValueError(f"authenticated metadata {name} must be a boolean")
-        return value
-
-    audit_key_id = require_int("audit_key_id", maximum=0xFFFFFFFF)
-    if audit_key_id not in audit_keys:
-        raise ValueError("unknown audit key id")
-    key = audit_keys[audit_key_id]
-    commit_identity = require_string("commit_identity", hex_digest=True)
-    serialized_eligibility = require_string("pre_stochastic_eligibility_digest", hex_digest=True)
-    prompt_nonce = require_int("prompt_nonce", maximum=0xFFFFFFFFFFFFFFFF)
-    benchmark_id = require_string("benchmark_id")
-    adaptive_policy = require_string("adaptive_policy")
-    profile_id = require_string("profile_id")
-    canary_eval = require_bool("canary_eval")
-    policy_version = require_int("policy_version", maximum=0xFFFF)
-    rate_ppm = require_int("stochastic_rate_ppm", maximum=1_000_000)
-    commitment = require_string("audit_selection_commitment", hex_digest=True)
-    header_prompt_nonce = require_int("header_prompt_nonce", maximum=0xFFFFFFFFFFFFFFFF)
-
-    header = data["header"]
-    base_k = int(header.base_k)
-    max_adaptive_k = int(header.max_adaptive_k)
-    
-    tension_map_id = getattr(header, "tension_map_id", 0)
-    tension_map_hash = getattr(header, "tension_map_hash", b"")
-    history_triggered_sequence = False
-    
-    if tension_map_id != 0:
-        if tension_maps is None or tension_map_id not in tension_maps:
-            raise ValueError("tension map missing")
-        tmap = tension_maps[tension_map_id]
-        if tmap.content_hash != tension_map_hash:
-            raise ValueError("tension map hash mismatch")
-        history_triggered_sequence = tmap.evaluate_triggers({"benchmark_family_id": benchmark_id})
-    if prompt_nonce != header_prompt_nonce or header.sequence_id != (prompt_nonce & 0xFFFFFFFF):
-        raise ValueError("V3.3 replay identifier/sequence id mismatch before commitment verification")
-    if profile_id != header.profile_id:
-        raise ValueError("V3.3 authenticated profile mismatch")
-
-    if policy_version == ADAPTIVE_POLICY_FIXED_ID:
-        expected_policy = ADAPTIVE_POLICY_FIXED
-        adaptive_k = False
-        if max_adaptive_k != base_k:
-            raise ValueError("V3.3 fixed policy/header semantics mismatch")
-    elif policy_version == ADAPTIVE_POLICY_HYBRID_ID:
-        expected_policy = ADAPTIVE_POLICY_HYBRID
-        adaptive_k = True
-        if max_adaptive_k <= base_k:
-            raise ValueError("V3.3 adaptive policy/header semantics mismatch")
-    else:
-        raise ValueError("V3.3 adaptive policy semantics mismatch")
-    if adaptive_policy != expected_policy:
-        raise ValueError("V3.3 adaptive policy semantics mismatch")
-    if not canary_eval and any(rec.trigger_flags & TRIGGER_CANARY for rec in data["tokens"]):
-        raise ValueError("pre-stochastic eligibility has canary evidence without an authenticated evaluation label")
-
-    recomputed_commit = _commit_identity(data["tokens"], base_k)
-    if not hmac.compare_digest(recomputed_commit, commit_identity):
-        raise ValueError("commit identity mismatch")
-    eligibility_digest = _pre_stochastic_eligibility_digest(
-        data["tokens"],
-        base_k=base_k,
-        max_adaptive_rank=max_adaptive_k,
-        adaptive_k=adaptive_k,
-    )
-    if not hmac.compare_digest(eligibility_digest, serialized_eligibility):
-        raise ValueError("pre-stochastic eligibility mismatch")
-
-    expected_commitment = audit_selection_commitment(
-        key,
-        commit_identity=recomputed_commit,
-        sequence_id=prompt_nonce,
-        policy_version=policy_version,
-        rate_ppm=rate_ppm,
-        benchmark_id=benchmark_id,
-        eligibility_digest=eligibility_digest,
-        audit_key_id=audit_key_id,
-        profile_id=profile_id,
-        base_k=base_k,
-        max_adaptive_k=max_adaptive_k,
-        adaptive_policy=adaptive_policy,
-        canary_eval=canary_eval,
-    ).hex()
-    if not hmac.compare_digest(expected_commitment, commitment):
-        raise ValueError("audit selection commitment mismatch")
-
-    for rec in data["tokens"]:
-        raw_rank = rec.chosen_rank if rec.chosen_rank != 255 else max_adaptive_k + 1
-        rank_eligible = adaptive_k and base_k < raw_rank <= max_adaptive_k
-        history_eligible = bool(rec.trigger_flags & TRIGGER_HISTORY)
-        canary_eligible = bool(rec.trigger_flags & TRIGGER_CANARY)
-        
-        # FIX: Outer 'if' stripped away, logic cleaned up.
-        if tension_map_id != 0 and history_eligible != history_triggered_sequence:
-            raise ValueError("tension map history trigger mismatch")
-            
-        if bool(rec.trigger_flags & TRIGGER_RANK) != rank_eligible:
-            raise ValueError("pre-stochastic rank eligibility mismatch")
-        otherwise_untriggered = not (rank_eligible or history_eligible or canary_eligible)
-        expected = False
-        if otherwise_untriggered and rate_ppm:
-            expected = keyed_sample_selected(
-                key,
-                commit_identity=recomputed_commit,
-                sequence_id=prompt_nonce,
-                token_index=rec.token_index,
-                policy_version=policy_version,
-                rate_ppm=rate_ppm,
-                benchmark_id=benchmark_id,
-                audit_key_id=audit_key_id,
-                profile_id=profile_id,
-                base_k=base_k,
-                max_adaptive_k=max_adaptive_k,
-                adaptive_policy=adaptive_policy,
-                canary_eval=canary_eval,
-            )
-        observed = bool(rec.trigger_flags & TRIGGER_STOCHASTIC)
-        if observed != expected:
-            raise ValueError("keyed stochastic selection replay mismatch")
-
-def reconstruct_token_evidence(buf_or_decoded: bytes | dict[str, Any]) -> list[dict[str, Any]]:
-    decoded = decode_compact_sequence(buf_or_decoded) if isinstance(buf_or_decoded, (bytes, bytearray)) else buf_or_decoded
-    spans = decoded.get("spans", [])
-    out = []
-    for rec in decoded["tokens"]:
-        active = [span for span in spans if span.start_token <= rec.token_index < span.end_token]
-        out.append({
-            "token_index": rec.token_index,
-            "chosen_id": rec.chosen_id,
-            "topk_ids": list(rec.topk_ids),
-            "topk_scores": list(rec.topk_scores),
-            "effective_topk": rec.effective_topk,
-            "chosen_rank": rec.chosen_rank,
-            "trigger_flags": rec.trigger_flags,
-            "record_flags": rec.record_flags,
-            "signals": active,
-        })
-    return out
+        raise ValueError("V3.*
+
