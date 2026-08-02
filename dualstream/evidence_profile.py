@@ -43,7 +43,7 @@ class EvidenceProfile:
 
 
 PROFILES: dict[str, EvidenceProfile] = {
-    EvidenceProfileId.CI_LITE.value: EvidenceProfile(EvidenceProfileId.CI_LITE, 24, 3, 10, ("pr", "normal", "nightly"), "h3e-ci-lite", 3.0, 512, 10000, 0.05, 512, 512, 1024, True),
+    EvidenceProfileId.CI_LITE.value: EvidenceProfile(EvidenceProfileId.CI_LITE, 24, 3, 10, ("pr", "normal", "nightly"), "h3e-ci-lite", 15.0, 512, 10000, 0.05, 512, 512, 1024, True),
     EvidenceProfileId.CI_STANDARD.value: EvidenceProfile(EvidenceProfileId.CI_STANDARD, 48, 5, 10, ("nightly", "release", "release-blocking"), "h3e-ci-standard", 6.0, 1024, 10000, 0.20, 1024, 1024, 2048),
     EvidenceProfileId.DEEP.value: EvidenceProfile(EvidenceProfileId.DEEP, 96, 5, 20, ("nightly", "probe", "adversarial"), "h3e-deep", 30.0, 2048, 10000, None, 2048, 2048, 4096),
     EvidenceProfileId.FORENSIC.value: EvidenceProfile(EvidenceProfileId.FORENSIC, 256, 5, 32, ("incident", "forensic", "replay"), "h3e-forensic", 120.0, 4096, 10000, None, 4096, 4096, 8192),
