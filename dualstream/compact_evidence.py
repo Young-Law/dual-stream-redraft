@@ -312,7 +312,6 @@ def _apply_v33_triggers(
     canary_eval: bool,
     profile_id: str,
     adaptive_policy: str,
-    tension_map: Any = None,
 ) -> tuple[list[CompactTokenEvidenceV3], bytes, str, str]:
     commit = _commit_identity(records, base_k)
     eligibility_digest = _pre_stochastic_eligibility_digest(
@@ -325,23 +324,10 @@ def _apply_v33_triggers(
         raise ValueError("keyed stochastic sampling requires an audit key")
 
     out: list[CompactTokenEvidenceV3] = []
-    
-    # Pre-evaluate sequence-level tension map context
-    sequence_context = {"benchmark_family_id": benchmark_id}
-    history_triggered_sequence = False
-    if tension_map is not None:
-        history_triggered_sequence = tension_map.evaluate_triggers(sequence_context)
-
     for rec in records:
         flags = rec.trigger_flags
         effective_topk = base_k
         raw_rank = rec.chosen_rank if rec.chosen_rank != 255 else max_adaptive_rank + 1
-        
-        # Tension map logic (currently applied to the sequence as a whole)
-        if tension_map is not None and history_triggered_sequence:
-            flags |= TRIGGER_HISTORY
-            effective_topk = max(effective_topk, max_adaptive_rank)
-            
         if adaptive_k and base_k < raw_rank <= max_adaptive_rank:
             flags |= TRIGGER_RANK
             effective_topk = max(effective_topk, raw_rank)
@@ -420,7 +406,6 @@ def encode_compact_sequence(
     benchmark_id: str = "",
     canary_eval: bool = False,
     assurance_class: str = "DSA-R",
-    tension_map: Any = None,
 ) -> bytes:
     if wire_version == VERSION_V33:
         return encode_compact_sequence_v33(
@@ -437,7 +422,6 @@ def encode_compact_sequence(
             benchmark_id=benchmark_id,
             canary_eval=canary_eval,
             assurance_class=assurance_class,
-            tension_map=tension_map,
         )
     if wire_version != VERSION_V32:
         raise ValueError(f"unsupported compact evidence encode version 0x{wire_version:04x}")
@@ -589,7 +573,6 @@ def encode_compact_sequence_v33(
     benchmark_id: str = "",
     canary_eval: bool = False,
     assurance_class: str = "DSA-R",
-    tension_map: Any = None,
 ) -> bytes:
     prof = get_evidence_profile(profile)
     if assurance_class != "DSA-R":
@@ -633,7 +616,6 @@ def encode_compact_sequence_v33(
         canary_eval=canary_eval,
         profile_id=prof.profile_id.value,
         adaptive_policy=adaptive_policy,
-        tension_map=tension_map,
     )
     spans_norm = _normalise_spans(spans)
     metadata = {
@@ -649,14 +631,7 @@ def encode_compact_sequence_v33(
     metadata_digest = _sha256(metadata_bytes)
     signal_schema_hash = hashlib.sha256(b"AST-1-v2.10").digest()
     probe_pack_hash = hashlib.sha256(b"none").digest()
-    
-    if tension_map is not None:
-        tension_map_id = tension_map.map_id
-        tension_map_hash = tension_map.content_hash
-    else:
-        tension_map_id = 0
-        tension_map_hash = hashlib.sha256(b"phase1-none").digest()
-
+    tension_map_hash = hashlib.sha256(b"phase1-none").digest()
     chunks, chunk_payloads = _encode_v33_chunks(records, prof.base_k, int(chunk_token_capacity))
     span_body = _encode_v33_spans(spans_norm, len(records))
     header = _HEADER_V33.pack(
@@ -678,7 +653,7 @@ def encode_compact_sequence_v33(
         stochastic_rate_ppm,
         audit_key_id,
         commitment,
-        tension_map_id,
+        0,
         tension_map_hash,
         1,
         int(chunk_token_capacity),
@@ -863,17 +838,12 @@ def _pack_v33_manifest(
             histogram[2] += 1
         else:
             histogram[3] += 1
-        # Bug Fix: Removed TRIGGER_ESCALATION from bits mapping because it 
-        # caused misalignment with index 4 ('multi') and 5 ('escalation').
-        bits = [TRIGGER_RANK, TRIGGER_STOCHASTIC, TRIGGER_HISTORY, TRIGGER_CANARY]
+        bits = [TRIGGER_RANK, TRIGGER_STOCHASTIC, TRIGGER_HISTORY, TRIGGER_CANARY, TRIGGER_ESCALATION]
         active = 0
         for idx, bit in enumerate(bits):
             if rec.trigger_flags & bit:
                 trigger_counts[idx] += 1
                 active += 1
-        if rec.trigger_flags & TRIGGER_ESCALATION:
-            trigger_counts[5] += 1
-            active += 1
         if active > 1:
             trigger_counts[4] += 1
         bitmap.append(1 if rec.trigger_flags & TRIGGER_STOCHASTIC else 0)
@@ -1211,8 +1181,6 @@ def _decode_v33(buf: bytes) -> dict[str, Any]:
             **metadata,
             "audit_key_id": audit_key_id,
             "audit_selection_commitment": audit_selection_commitment_bytes.hex(),
-            "tension_map_id": tension_map_id,
-            "tension_map_hash": tension_map_hash.hex(),
             "commit_identity": metadata.get("commit_identity", ""),
             "policy_version": adaptive_policy_id,
             "stochastic_rate_ppm": stochastic_rate_ppm,
@@ -1342,7 +1310,7 @@ def decode_compact_sequence(buf: bytes) -> dict[str, Any]:
     raise ValueError(f"unsupported compact evidence version 0x{version:04x}")
 
 
-def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, bytes], tension_maps: dict[int, Any] | None = None) -> None:
+def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, bytes]) -> None:
     data = decode_compact_sequence(decoded) if isinstance(decoded, (bytes, bytearray)) else decoded
     if data["header"].schema_version != VERSION_V33:
         return
@@ -1391,18 +1359,6 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
     header = data["header"]
     base_k = int(header.base_k)
     max_adaptive_k = int(header.max_adaptive_k)
-    
-    tension_map_id = getattr(header, "tension_map_id", 0)
-    tension_map_hash = getattr(header, "tension_map_hash", b"")
-    history_triggered_sequence = False
-    
-    if tension_map_id != 0:
-        if tension_maps is None or tension_map_id not in tension_maps:
-            raise ValueError("tension map missing")
-        tmap = tension_maps[tension_map_id]
-        if tmap.content_hash != tension_map_hash:
-            raise ValueError("tension map hash mismatch")
-        history_triggered_sequence = tmap.evaluate_triggers({"benchmark_family_id": benchmark_id})
     if prompt_nonce != header_prompt_nonce or header.sequence_id != (prompt_nonce & 0xFFFFFFFF):
         raise ValueError("V3.3 replay identifier/sequence id mismatch before commitment verification")
     if profile_id != header.profile_id:
@@ -1460,11 +1416,6 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
         rank_eligible = adaptive_k and base_k < raw_rank <= max_adaptive_k
         history_eligible = bool(rec.trigger_flags & TRIGGER_HISTORY)
         canary_eligible = bool(rec.trigger_flags & TRIGGER_CANARY)
-        
-        # FIX: Outer 'if' stripped away, logic cleaned up.
-        if tension_map_id != 0 and history_eligible != history_triggered_sequence:
-            raise ValueError("tension map history trigger mismatch")
-            
         if bool(rec.trigger_flags & TRIGGER_RANK) != rank_eligible:
             raise ValueError("pre-stochastic rank eligibility mismatch")
         otherwise_untriggered = not (rank_eligible or history_eligible or canary_eligible)
