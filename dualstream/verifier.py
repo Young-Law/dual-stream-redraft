@@ -4,7 +4,7 @@ import json
 import os
 import time
 import tracemalloc
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,39 @@ class VerifierWorkCertificate:
     maximum_live_bytes: int
     full_artifact_materializations: int
     normalized_runtime_seconds: float | None = None
+    signature: str | None = None
+
+
+def canonical_serialize_certificate(cert: VerifierWorkCertificate) -> bytes:
+    data = {
+        "bytes_read": cert.bytes_read,
+        "bytes_hashed": cert.bytes_hashed,
+        "token_records_decoded": cert.token_records_decoded,
+        "candidate_entries_decoded": cert.candidate_entries_decoded,
+        "varint_bytes_decoded": cert.varint_bytes_decoded,
+        "chunks_verified": cert.chunks_verified,
+        "span_events_indexed": cert.span_events_indexed,
+        "span_overlay_operations": cert.span_overlay_operations,
+        "allocations": cert.allocations,
+        "maximum_live_bytes": cert.maximum_live_bytes,
+        "full_artifact_materializations": cert.full_artifact_materializations,
+        "normalized_runtime_seconds": cert.normalized_runtime_seconds,
+    }
+    serialized = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return serialized.encode("utf-8")
+
+
+def sign_work_certificate(cert: VerifierWorkCertificate, key: bytes) -> str:
+    import hmac
+    import hashlib
+    payload = canonical_serialize_certificate(cert)
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+
+def verify_work_certificate_signature(cert: VerifierWorkCertificate, signature: str, key: bytes) -> bool:
+    import hmac
+    expected = sign_work_certificate(cert, key)
+    return hmac.compare_digest(expected, signature)
 
 
 @dataclass(frozen=True)
@@ -128,7 +161,7 @@ def _evaluate_profile_budget(summary, prof, strict_profile_budget: bool) -> tupl
     return "pass", [], []
 
 
-def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None) -> VerificationReport:
+def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None, verifier_key: bytes | None = None) -> VerificationReport:
     errors: list[str] = []; failure_codes: list[int | str] = []
     start = time.perf_counter(); tracemalloc.start()
     prof = get_evidence_profile(profile)
@@ -175,6 +208,9 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         full_artifact_materializations=0,
         normalized_runtime_seconds=elapsed,
     )
+
+    if verifier_key is not None:
+        cert = replace(cert, signature=sign_work_certificate(cert, verifier_key))
 
     if enforce_budget:
         traced_limit = int(prof.verifier_traced_peak_mib or prof.verifier_peak_mib)*1024*1024

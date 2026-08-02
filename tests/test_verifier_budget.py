@@ -90,3 +90,29 @@ def test_infrastructure_instability_yields_inconclusive_infra(tmp_path, monkeypa
     assert report.verification_outcome == "INCONCLUSIVE_INFRA"
     assert 524 in report.failure_codes # AST_INFRASTRUCTURE_INSTABILITY
     assert 523 not in report.failure_codes # AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION
+
+
+def test_verifier_work_certificate_signing_and_verification(tmp_path):
+    from dualstream.verifier import sign_work_certificate, verify_work_certificate_signature
+    from dataclasses import replace
+
+    blob = encode_compact_sequence([{"chosen_id": i, "topk_ids": [i, i+1, i+2], "topk_scores": [.7,.2,.1]} for i in range(100)])
+    p = tmp_path / "compact_evidence.dsae"
+    p.write_bytes(blob)
+    
+    key = b"secret-verifier-pki-hmac-key"
+    report = verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr", verifier_key=key)
+    assert report.ok, report.errors
+    cert = report.work_certificate
+    assert cert is not None
+    assert cert.signature is not None
+    
+    # 1. Validate the signature directly using our helper
+    assert verify_work_certificate_signature(cert, cert.signature, key) is True
+    
+    # 2. Check that using a wrong key fails validation
+    assert verify_work_certificate_signature(cert, cert.signature, b"wrong-key") is False
+    
+    # 3. Check that tampering with any field invalidates the signature
+    tampered_cert = replace(cert, bytes_read=cert.bytes_read + 1)
+    assert verify_work_certificate_signature(tampered_cert, cert.signature, key) is False

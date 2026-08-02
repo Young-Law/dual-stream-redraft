@@ -302,7 +302,8 @@ def cmd_kaggle_submit(args: argparse.Namespace) -> int:
 
 def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
     from .verifier import verify_evidence_artifact
-    report = verify_evidence_artifact(args.artifact, profile=args.profile, ci_mode=args.ci_mode, strict_profile_budget=args.strict_profile_budget, enforce_rss_budget=args.enforce_rss_budget)
+    vkey = args.verifier_key.encode("utf-8") if getattr(args, "verifier_key", None) is not None else None
+    report = verify_evidence_artifact(args.artifact, profile=args.profile, ci_mode=args.ci_mode, strict_profile_budget=args.strict_profile_budget, enforce_rss_budget=args.enforce_rss_budget, verifier_key=vkey)
     payload = report.to_dict()
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -422,6 +423,7 @@ def build_parser() -> argparse.ArgumentParser:
     vb.add_argument("--json", action="store_true")
     vb.add_argument("--strict-profile-budget", action="store_true")
     vb.add_argument("--enforce-rss-budget", action="store_true")
+    vb.add_argument("--verifier-key", default=None, help="Symmetric UTF-8 key to sign the Verifier Work Certificate")
     vb.set_defaults(func=cmd_verify_evidence_budget)
 
     conf = sub.add_parser("conformance", help="Run deterministic DSA conformance checks")
