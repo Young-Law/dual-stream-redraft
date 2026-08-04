@@ -1,0 +1,16 @@
+{
+  "prompt_nonce": 16405161560660137666,
+  "model": "google/gemma-3-1b-it",
+  "running_hash": "9fc601f7bb4f4d4a3a854b49f65921240f402891340127a18061e2e847a2810e",
+  "config": {
+    "model": "google/gemma-3-1b-it",
+    "max_new_tokens": 64,
+    "top_k": 5,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "do_sample": true,
+    "include_attn": false,
+    "include_probes": false,
+    "probe_pack_path": null
+  }
+}

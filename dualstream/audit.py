@@ -2,34 +2,78 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Callable
 from .frame import MonologueFrameV1
-from .vocab import *
+from .vocab import concept_label, CONCEPT_FACTUALITY_CONCERN
+
+AFFIRM_TOKENS = {"yes", "absolutely", "correct", "right", "sure"}
+DENY_TOKENS = {"no", "not", "incorrect", "false", "can't", "cannot"}
 
 AFFIRM_TOKENS={"yes","absolutely","correct","right","sure"}
 SENSITIVE_WORDS={"password","one-time code","otp","credential"}
 
 @dataclass(frozen=True)
 class CoherenceFinding:
-    kind:str; severity:float; message:str; token_index:Optional[int]=None; evidence:Optional[Dict[str,Any]]=None
+    kind: str
+    severity: float  # 0..1
+    message: str
+    token_index: Optional[int] = None
+    evidence: Optional[Dict[str, Any]] = None
 
-@dataclass
-class CoherenceOutcome:
-    outcome:str
-    findings:List[CoherenceFinding]
-    max_severity:float
-    audit_tier:str
-    fallback_recommended:bool
-    def to_dict(self)->Dict[str,Any]:
-        return {'outcome':self.outcome,'findings':[asdict(f) for f in self.findings],'max_severity':self.max_severity,'audit_tier':self.audit_tier,'fallback_recommended':self.fallback_recommended}
 
-def coherence_audit(answer_text:str,frames:List[MonologueFrameV1],*,decode_token:Optional[Callable[[int],str]]=None, factuality_concept_id:int=FACTUALITY_CONCERN)->List[CoherenceFinding]:
-    return coherence_outcome(answer_text,frames,decode_token=decode_token,factuality_concept_id=factuality_concept_id).findings
+def _normalize(s: str) -> str:
+    return " ".join(s.lower().strip().split())
 
-def coherence_outcome(answer_text:str,frames:List[MonologueFrameV1],*,decode_token:Optional[Callable[[int],str]]=None,factuality_concept_id:int=FACTUALITY_CONCERN,risk_threshold_review:float=0.45,risk_threshold_fail:float=0.7)->CoherenceOutcome:
-    findings=[]
-    idx=[f.token_index for f in frames]
-    if idx and idx!=list(range(min(idx),min(idx)+len(idx))): findings.append(CoherenceFinding('non_contiguous_token_indices',0.6,'Token indices are non-contiguous'))
-    if len(set(idx))!=len(idx): findings.append(CoherenceFinding('duplicate_token_index',0.7,'Duplicate token index found'))
-    concept_max={}
+
+def _contains_any(text: str, words: set[str]) -> bool:
+    t = _normalize(text)
+    return any(w in t for w in words)
+
+
+def coherence_audit(
+    answer_text: str,
+    frames: List[MonologueFrameV1],
+    *,
+    decode_token: Optional[Callable[[int], str]] = None,
+    factuality_concept_id: int = CONCEPT_FACTUALITY_CONCERN,
+) -> List[CoherenceFinding]:
+    """
+    A minimal, automated Coherence Audit (Section 5) over:
+      - token-level affordances (top-K probs)
+      - optional concept detections
+
+    This is a *sketch* implementation intended as a working starting point.
+    """
+    findings: List[CoherenceFinding] = []
+    ans_norm = _normalize(answer_text)
+
+    # Aggregate concept scores
+    max_fact_score = 0.0
+    for fr in frames:
+        for c in fr.concepts:
+            if c.concept_id == factuality_concept_id:
+                max_fact_score = max(max_fact_score, float(c.score))
+
+    # Rule: factuality concern high but answer strongly affirms
+    if max_fact_score >= 0.70 and _contains_any(ans_norm, AFFIRM_TOKENS):
+        findings.append(
+            CoherenceFinding(
+                kind="affirmation_vs_factuality_concern",
+                severity=min(1.0, max_fact_score),
+                message="Factuality concern is high in Monologue evidence, but Answer appears to affirm the premise.",
+                evidence={"max_factuality_score": max_fact_score},
+            )
+        )
+
+    # Rule: logits show strong probability mass on affirmation tokens while answer denies
+    def token_text(tid: int) -> str:
+        if decode_token is None:
+            return str(tid)
+        try:
+            return decode_token(tid).strip().lower()
+        except Exception:
+            return str(tid)
+
+    max_aff_mass = 0.0
+    token_of_max = None
     for fr in frames:
         for c in fr.concepts: concept_max[c.concept_id]=max(concept_max.get(c.concept_id,0.0),float(c.score))
         if fr.audit_tier is None: findings.append(CoherenceFinding('missing_metadata',0.2,'audit_tier missing',fr.token_index))

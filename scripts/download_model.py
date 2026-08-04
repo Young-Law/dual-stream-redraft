@@ -1,37 +1,43 @@
-from __future__ import annotations
+#!/usr/bin/env python3
+"""
+Downloads a Hugging Face model to a local directory for offline use.
+Defaults to 'google/gemma-3-1b-it', which can be overridden via command-line arguments.
 
+Usage:
+    python scripts/download_model.py [model_id] [output_dir]
+
+Example:
+    python scripts/download_model.py google/gemma-3-1b-it models/gemma-3-1b-it
+"""
 import argparse
+import sys
 from pathlib import Path
-
 from huggingface_hub import snapshot_download
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Download a Hugging Face model for offline use.")
-    parser.add_argument("--model", default="gpt2", help="HF model ID to download")
-    parser.add_argument(
-        "--cache-dir",
-        default=None,
-        help="Optional cache directory (defaults to HF_HOME/transformers cache)",
-    )
-    parser.add_argument(
-        "--local-dir",
-        default=None,
-        help="Optional local directory to materialize a full copy of the repo snapshot",
-    )
+def main():
+    parser = argparse.ArgumentParser(description="Download HF model for offline use.")
+    parser.add_argument("model_id", nargs="?", default="google/gemma-3-1b-it", help="Hugging Face model ID")
+    parser.add_argument("output_dir", nargs="?", default="models/gemma-3-1b-it", help="Local directory to save the model")
     args = parser.parse_args()
 
-    local_dir = Path(args.local_dir).expanduser().resolve() if args.local_dir else None
-    if local_dir is not None:
-        local_dir.mkdir(parents=True, exist_ok=True)
-
-    snapshot_download(
-        repo_id=args.model,
-        cache_dir=args.cache_dir,
-        local_dir=str(local_dir) if local_dir else None,
-        local_dir_use_symlinks=False if local_dir else None,
-    )
-
+    print(f"Downloading model '{args.model_id}' to '{args.output_dir}'...")
+    
+    try:
+        snapshot_download(
+            repo_id=args.model_id,
+            local_dir=args.output_dir,
+            local_dir_use_symlinks=False,  # Ensure actual files are present for portability
+            ignore_patterns=["*.msgpack", "*.h5", "*.ot", "flax_model.msgpack"], # prefer safetensors/pytorch
+        )
+        print(f"
+Success! Model downloaded to: {Path(args.output_dir).resolve()}")
+        print(f"
+To use this model offline with the dualstream CLI:")
+        print(f"  python -m dualstream.cli generate --model {args.output_dir} --prompt "..."")
+    except Exception as e:
+        print(f"
+Error downloading model: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

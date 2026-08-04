@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-import hashlib
 import random
 import re
 
@@ -14,11 +13,6 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from .frame import AttnSummary, MonologueFrameV1, TopKToken, encode_frame
 from .integrity import RunningHash
 from .probes import ProbePack, run_probes
-from .audit_scheduler import compute_entropy, compute_mass_for_token_set, compute_lightweight_risk, decide_audit_tier
-from .randomized_audit import randomized_selection
-from .fallback import FallbackRouter
-from .audit import coherence_outcome
-from .vocab import INTERNALLY_MOTIVATED_SYCOPHANCY_PROXY, FACTUALITY_CONCERN
 
 
 @dataclass
@@ -49,28 +43,6 @@ class GenerationConfig:
     device: Optional[str] = None  # e.g. "cuda", "cpu"
     local_files_only: bool = False
     cache_dir: Optional[str] = None
-
-    audit_mode: str = "tiered"
-    poc_mode: str = "none"
-    randomized_audit: bool = False
-    audit_nonce: Optional[int] = None
-    entropy_threshold: float = 4.0
-    refusal_mass_threshold: float = 0.20
-    risk_threshold_review: float = 0.45
-    risk_threshold_fail: float = 0.70
-    max_red_retries: int = 1
-    fallback_strategy: str = "canned_refusal"
-    selective_retention: bool = True
-    evidence_profile: str = "DSA-CI-Lite"
-    compact_evidence: bool = False
-    adaptive_k: bool = False
-    max_adaptive_k: Optional[int] = None
-    chunk_token_capacity: int = 256
-    compact_wire_version: int = 0x0303
-    audit_key: Optional[bytes] = None
-    audit_key_id: int = 0
-    stochastic_rate_ppm: int = 0
-    benchmark_id: str = ""
 
 
 class DualStreamGenerator:
@@ -267,6 +239,16 @@ class DualStreamGenerator:
         else:
             attention_mask = attention_mask.to(device)
 
+        rendered_prompt = self._render_prompt(prompt)
+        model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
+        input_ids = model_inputs["input_ids"].to(device)
+
+        attention_mask = model_inputs.get("attention_mask")
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids, device=device)
+        else:
+            attention_mask = attention_mask.to(device)
+
         stop_token_ids = self._get_stop_token_ids()
 
         generated_ids: List[int] = []
@@ -355,18 +337,6 @@ class DualStreamGenerator:
                         ConceptScore(concept_id=cid, score=float(score))
                         for cid, score in hits
                     ]
-
-                entropy = compute_entropy(probs_full.detach().float().cpu().tolist())
-                tok_pairs = [(self.tokenizer.decode([tid]), p) for tid,p in zip(top_ids_list, top_probs_list)]
-                refusal_mass = compute_mass_for_token_set(tok_pairs,{"no","cannot","can't","refuse"})
-                affirmation_mass = compute_mass_for_token_set(tok_pairs,{"yes","correct","right","absolutely"})
-                concept_map = {c.concept_id: float(c.score) for c in concepts}
-                if cfg.poc_mode=="level1_sycophancy_proxy" and "false" in prompt.lower():
-                    concept_map[INTERNALLY_MOTIVATED_SYCOPHANCY_PROXY]=max(0.7, concept_map.get(INTERNALLY_MOTIVATED_SYCOPHANCY_PROXY,0))
-                    concept_map[FACTUALITY_CONCERN]=max(0.7, concept_map.get(FACTUALITY_CONCERN,0))
-                risk_score = compute_lightweight_risk(entropy, refusal_mass, concept_map)
-                decision = decide_audit_tier(audit_mode=cfg.audit_mode,risk_score=risk_score,entropy=entropy,entropy_threshold=cfg.entropy_threshold,refusal_mass=refusal_mass,refusal_mass_threshold=cfg.refusal_mass_threshold,high_risk_prompt=(cfg.audit_mode=="full"),selective_retention=cfg.selective_retention)
-                rand_meta = randomized_selection(cfg.audit_nonce if cfg.audit_nonce is not None else prompt_nonce) if cfg.randomized_audit else {"audit_nonce_hash":None,"audit_path_id":None,"randomized_probe_selection":None}
 
                 frame = MonologueFrameV1(
                     prompt_nonce=prompt_nonce,
