@@ -46,3 +46,68 @@ try:
     ]
 except Exception:
     pass
+
+
+# v2.10 Phase 2: envelopes, triggers, retention pipeline, retry
+try:
+    from .envelope import (  # noqa: F401
+        EnvelopeSession,
+        EnvelopePolicy,
+        EnvelopeHeader,
+        SealedEnvelope,
+        InterimCommitment,
+        verify_envelope,
+        verify_interim_commitment,
+    )
+    from .triggers import (  # noqa: F401
+        ThresholdTrigger,
+        ThresholdOperator,
+        SequenceTrigger,
+        SequenceMode,
+        CompositeTrigger,
+        CompositeOperator,
+        TriggerPipeline,
+        TriggerResult,
+        TriggerBase,
+    )
+    from .retention_manager import (  # noqa: F401
+        RetentionPipeline,
+        PipelineStatus,
+        PipelineStep,
+        RetentionPipelineResult,
+    )
+    from .verifier import (  # noqa: F401
+        RetryPolicy,
+        RetryAttempt,
+        RetryResult,
+        verify_with_retry,
+    )
+
+    __all__ += [
+        "EnvelopeSession",
+        "EnvelopePolicy",
+        "EnvelopeHeader",
+        "SealedEnvelope",
+        "InterimCommitment",
+        "verify_envelope",
+        "verify_interim_commitment",
+        "ThresholdTrigger",
+        "ThresholdOperator",
+        "SequenceTrigger",
+        "SequenceMode",
+        "CompositeTrigger",
+        "CompositeOperator",
+        "TriggerPipeline",
+        "TriggerResult",
+        "TriggerBase",
+        "RetentionPipeline",
+        "PipelineStatus",
+        "PipelineStep",
+        "RetentionPipelineResult",
+        "RetryPolicy",
+        "RetryAttempt",
+        "RetryResult",
+        "verify_with_retry",
+    ]
+except Exception:
+    pass

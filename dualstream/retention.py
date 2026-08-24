@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from .compact_evidence import decode_compact_sequence, compute_v33_local_minimum_reconstructable_bytes, _HEADER, _CHUNK, _TOKEN, _TOPK, _SPAN
 from .evidence_profile import get_evidence_profile
+from . import retention_lifecycle
 
 
 @dataclass(frozen=True)
@@ -89,3 +90,15 @@ class RetentionReceipt:
     validator_id: str
     receipt_expiry: float
     signature: dict[str, str]
+
+
+def compute_retention_floor_with_requirement(requirement: retention_lifecycle.RetentionRequirement, artifact_bytes: bytes) -> int:
+    """Compute the retention floor for an artifact, capped by the requirement's max_artifact_bytes.
+
+    Uses the existing evidence budget summary pipeline to determine the minimum
+    reconstructable byte floor, then returns the lesser of that floor and
+    ``requirement.max_artifact_bytes``.
+    """
+    summary = compute_evidence_budget_summary(artifact_bytes)
+    floor = min(summary.minimum_reconstructable_bytes, requirement.max_artifact_bytes)
+    return floor

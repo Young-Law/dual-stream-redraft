@@ -19,6 +19,11 @@ from .arc_task import load_task, load_tasks_from_dir
 from .cli import _run_generation
 from .generator import DualStreamGenerator, GenerationConfig
 from .offline import enforce_offline_env, preflight_model_assets
+from .storage_validator import (
+    LocalFilesystemBackend,
+    StorageValidationResult,
+    validate_persisted_artifact,
+)
 
 
 def _utcnow() -> str:
@@ -374,6 +379,24 @@ class DualStreamService:
             }
 
         return self.create_job("kaggle_submit", run)
+
+    def validate_artifact_storage(
+        self,
+        artifact_id: str,
+        expected_hash: bytes,
+        storage_dir: str | Path | None = None,
+    ) -> StorageValidationResult:
+        """Validate a persisted artifact in local filesystem storage against its expected SHA-256 hash.
+
+        Uses a ``LocalFilesystemBackend`` rooted at *storage_dir* (defaults to
+        ``<package_dir>/.storage``) and delegates to
+        :func:`~dualstream.storage_validator.validate_persisted_artifact`.
+        """
+        if storage_dir is None:
+            storage_dir = Path(__file__).resolve().parent / ".storage"
+        backend = LocalFilesystemBackend(storage_dir)
+        stored_size = backend.size(artifact_id) or 0
+        return validate_persisted_artifact(backend, artifact_id, stored_size, expected_hash)
 
     def start_script(self, payload: dict[str, Any]) -> JobRecord:
         def run(job: JobRecord, cancelled: threading.Event) -> dict[str, Any]:

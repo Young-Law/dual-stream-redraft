@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import time
 import tracemalloc
+import zlib
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, verify_keyed_replay, SCORE_TOLERANCE
+from .compact_evidence import decode_compact_sequence, reconstruct_token_evidence, verify_keyed_replay, SCORE_TOLERANCE, compute_retention_requirement_hash, EvidenceManifestV33, VERSION_V33
 from .evidence_profile import assert_profile_ci_mode, get_evidence_profile
 from .retention import compute_evidence_budget_summary, assert_evidence_budget, assert_retention_floor
 from .vocab import (
@@ -70,6 +72,146 @@ def verify_work_certificate_signature(cert: VerifierWorkCertificate, signature: 
 
 
 @dataclass(frozen=True)
+class RetryPolicy:
+    """Policy governing INCONCLUSIVE_INFRA retry behavior."""
+    max_retries: int = 3
+    backoff_base_seconds: float = 1.0
+    backoff_multiplier: float = 2.0
+    max_backoff_seconds: float = 30.0
+    retry_on_infra_only: bool = True
+
+
+@dataclass
+class RetryAttempt:
+    """Metadata for a single retry attempt."""
+    attempt: int
+    started_at: float
+    elapsed_seconds: float
+    outcome: str
+    errors: list
+    failure_codes: list
+    peak_tracemalloc_bytes: int
+    verifier_peak_rss_bytes: int
+
+
+@dataclass
+class RetryResult:
+    """Result of a retry loop with full metadata."""
+    final_report: VerificationReport
+    attempts: list
+    total_attempts: int
+    total_elapsed_seconds: float
+    retried: bool
+    converged: bool
+
+
+DEFAULT_RETRY_POLICY = RetryPolicy()
+
+
+def verify_with_retry(
+    path: str | Path,
+    *,
+    profile: str = "DSA-CI-Lite",
+    ci_mode: str = "pr",
+    enforce_budget: bool = True,
+    strict_profile_budget: bool = False,
+    enforce_rss_budget: bool = False,
+    audit_keys: dict[int, bytes] | None = None,
+    tension_maps: dict[int, Any] | None = None,
+    verifier_key: bytes | None = None,
+    retention_requirement: str | dict | None = None,
+    retry_policy: RetryPolicy | None = None,
+) -> VerificationReport:
+    """Verify an evidence artifact with automatic INCONCLUSIVE_INFRA retry.
+
+    When the verifier produces an ``INCONCLUSIVE_INFRA`` outcome (artifact may
+    be valid but the verifier's resource environment was insufficient), this
+    function retries up to ``retry_policy.max_retries`` times with exponential
+    backoff.
+
+    Each attempt's metadata is preserved in ``RetryResult.attempts``.
+
+    Returns the final ``VerificationReport`` and a ``RetryResult``.
+    """
+    policy = retry_policy or DEFAULT_RETRY_POLICY
+    first_report = verify_evidence_artifact(
+        path, profile=profile, ci_mode=ci_mode, enforce_budget=enforce_budget,
+        strict_profile_budget=strict_profile_budget, enforce_rss_budget=enforce_rss_budget,
+        audit_keys=audit_keys, tension_maps=tension_maps, verifier_key=verifier_key,
+        retention_requirement=retention_requirement,
+    )
+
+    if first_report.verification_outcome != "INCONCLUSIVE_INFRA":
+        return first_report
+
+    attempts: list[RetryAttempt] = [
+        RetryAttempt(
+            attempt=0, started_at=time.perf_counter(),
+            elapsed_seconds=first_report.elapsed_seconds,
+            outcome=first_report.verification_outcome,
+            errors=list(first_report.errors),
+            failure_codes=list(first_report.failure_codes),
+            peak_tracemalloc_bytes=first_report.peak_tracemalloc_bytes,
+            verifier_peak_rss_bytes=first_report.verifier_peak_rss_bytes,
+        )
+    ]
+
+    loop_start = time.perf_counter()
+    last_report = first_report
+    converged = False
+
+    for attempt_idx in range(1, policy.max_retries + 1):
+        backoff = min(
+            policy.backoff_base_seconds * (policy.backoff_multiplier ** (attempt_idx - 1)),
+            policy.max_backoff_seconds,
+        )
+        time.sleep(backoff)
+
+        attempt_report = verify_evidence_artifact(
+            path, profile=profile, ci_mode=ci_mode, enforce_budget=enforce_budget,
+            strict_profile_budget=strict_profile_budget, enforce_rss_budget=enforce_rss_budget,
+            audit_keys=audit_keys, tension_maps=tension_maps, verifier_key=verifier_key,
+            retention_requirement=retention_requirement,
+        )
+        attempts.append(RetryAttempt(
+            attempt=attempt_idx, started_at=time.perf_counter(),
+            elapsed_seconds=attempt_report.elapsed_seconds,
+            outcome=attempt_report.verification_outcome,
+            errors=list(attempt_report.errors),
+            failure_codes=list(attempt_report.failure_codes),
+            peak_tracemalloc_bytes=attempt_report.peak_tracemalloc_bytes,
+            verifier_peak_rss_bytes=attempt_report.verifier_peak_rss_bytes,
+        ))
+
+        if attempt_report.verification_outcome != "INCONCLUSIVE_INFRA":
+            converged = True
+            last_report = attempt_report
+            break
+        last_report = attempt_report
+
+    total_elapsed = time.perf_counter() - loop_start
+    # Store retry metadata on the report via monkey-patch (frozen dataclass)
+    retry_result = RetryResult(
+        final_report=last_report, attempts=attempts,
+        total_attempts=len(attempts), total_elapsed_seconds=total_elapsed,
+        retried=True, converged=converged,
+    )
+    try:
+        object.__setattr__(last_report, "retry_result", retry_result)
+    except AttributeError:
+        pass
+
+    # Update retention_state to indicate retry
+    try:
+        new_state = "RETRIED_INFRA_PASS" if last_report.ok else "RETRIED_INFRA_FAIL"
+        object.__setattr__(last_report, "retention_state", new_state)
+    except AttributeError:
+        pass
+
+    return last_report
+
+
+@dataclass(frozen=True)
 class VerificationReport:
     ok: bool
     profile_id: str
@@ -103,6 +245,7 @@ class VerificationReport:
     ceiling_bytes_per_token: int = 0
     work_certificate: VerifierWorkCertificate | None = None
     retention_state: str = "LOCAL_PASS"
+    retention_hash_valid: bool = False
 
     @property
     def peak_rss_bytes(self): return self.verifier_peak_rss_bytes
@@ -161,11 +304,11 @@ def _evaluate_profile_budget(summary, prof, strict_profile_budget: bool) -> tupl
     return "pass", [], []
 
 
-def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None, verifier_key: bytes | None = None) -> VerificationReport:
+def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", ci_mode: str = "pr", enforce_budget: bool = True, strict_profile_budget: bool = False, enforce_rss_budget: bool = False, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None, verifier_key: bytes | None = None, retention_requirement: str | dict | None = None) -> VerificationReport:
     errors: list[str] = []; failure_codes: list[int | str] = []
     start = time.perf_counter(); tracemalloc.start()
     prof = get_evidence_profile(profile)
-    token_count=adaptive_count=max_eff=rank_overflow=chunks=spans=0; raw_bpt=0.0; compressed_bpt=None; retained=minimum=margin=0; budget_status="not_evaluated_disabled" if not enforce_budget else "not_evaluated_due_to_structural_failure"
+    token_count=adaptive_count=max_eff=rank_overflow=chunks=spans=0; raw_bpt=0.0; compressed_bpt=None; retained=minimum=margin=0; budget_status="not_evaluated_disabled" if not enforce_budget else "not_evaluated_due_to_structural_failure"; recon_mean=recon_p50=recon_p95=0.0
     try:
         assert_profile_ci_mode(prof, ci_mode)
         artifact_path = find_compact_artifact(path); data = artifact_path.read_bytes(); decoded = decode_compact_sequence(data)
@@ -173,7 +316,17 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
             verify_keyed_replay(decoded, audit_keys, tension_maps=tension_maps)
         _enforce_metadata_binding(_load_run_metadata(path), artifact_path, decoded, decoded["sha256"])
         if decoded["header"].profile_id != prof.profile_id.value: raise ValueError(f"artifact profile {decoded['header'].profile_id} does not match requested {prof.profile_id.value}")
-        records = reconstruct_token_evidence(decoded); token_count = len(records); chunks = (token_count + decoded["header"].chunk_token_capacity - 1)//decoded["header"].chunk_token_capacity if token_count else 0; spans=len(decoded.get("spans", []))
+        _cap = decoded["header"].chunk_token_capacity; _spans = decoded.get("spans", []); records: list[dict[str, Any]] = []; _chunk_timings: list[float] = []
+        for _cs in range(0, len(decoded["tokens"]), _cap):
+            _ct = decoded["tokens"][_cs:_cs + _cap]; _t0 = time.perf_counter()
+            for _rec in _ct:
+                records.append({"token_index": _rec.token_index, "chosen_id": _rec.chosen_id, "topk_ids": list(_rec.topk_ids), "topk_scores": list(_rec.topk_scores), "effective_topk": _rec.effective_topk, "chosen_rank": _rec.chosen_rank, "trigger_flags": _rec.trigger_flags, "record_flags": _rec.record_flags, "signals": [s for s in _spans if s.start_token <= _rec.token_index < s.end_token]})
+            _chunk_timings.append(time.perf_counter() - _t0)
+        token_count = len(records); chunks = len(_chunk_timings); spans = len(_spans)
+        if _chunk_timings:
+            recon_mean = statistics.mean(_chunk_timings); recon_p50 = statistics.median(_chunk_timings); _st = sorted(_chunk_timings); recon_p95 = _st[int(len(_st) * 0.95) if len(_st) > 1 else 0]
+        else:
+            recon_mean = recon_p50 = recon_p95 = 0.0
         for i, rec in enumerate(records):
             if rec["token_index"] != i: raise ValueError("token indexes are not contiguous")
             if rec["effective_topk"] != len(rec["topk_ids"]) or len(rec["topk_ids"]) != len(rec["topk_scores"]): raise ValueError("top-k evidence shape mismatch")
@@ -181,7 +334,7 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
             if rec.get("chosen_rank",255)==255 or int(rec.get("chosen_rank",255)) > prof.max_adaptive_k: rank_overflow += 1
             if any(score < -SCORE_TOLERANCE or score > 1 + SCORE_TOLERANCE for score in rec["topk_scores"]): raise ValueError("quantized score outside valid range")
         eff=[r["effective_topk"] for r in records]; max_eff=max(eff, default=0); adaptive_count=sum(1 for k in eff if k > prof.base_k)
-        summary = compute_evidence_budget_summary(data, prof.profile_id.value); raw_bpt=summary.raw_bytes_per_token; compressed_bpt=summary.compressed_bytes_per_token; retained=summary.retained_reconstructable_bytes; minimum=summary.minimum_reconstructable_bytes; margin=summary.retention_floor_margin
+        summary = compute_evidence_budget_summary(data, prof.profile_id.value); raw_bpt=summary.raw_bytes_per_token; compressed_bpt=round(len(zlib.compress(data)) / token_count, 2) if token_count else None; retained=summary.retained_reconstructable_bytes; minimum=summary.minimum_reconstructable_bytes; margin=summary.retention_floor_margin
         assert_retention_floor(summary)
         if enforce_budget:
             budget_status, budget_errors, budget_codes = _evaluate_profile_budget(summary, prof, strict_profile_budget)
@@ -229,6 +382,21 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
     if not ok and all(c == AST_INFRASTRUCTURE_INSTABILITY for c in failure_codes):
         outcome = "INCONCLUSIVE_INFRA"
 
+    # P7: Manifest chaining — verify retention requirement hash against V3.3 manifest
+    retention_hash_valid = False
+    if 'decoded' in locals() and retention_requirement is not None:
+        manifest: EvidenceManifestV33 | None = decoded.get("manifest")
+        header_ver = decoded.get("header")
+        if manifest is not None and header_ver is not None and getattr(header_ver, "schema_version", None) == VERSION_V33:
+            expected_hash = compute_retention_requirement_hash(retention_requirement)
+            actual_hash_hex = manifest.retention_requirement_hash
+            retention_hash_valid = expected_hash.hex() == actual_hash_hex
+            if not retention_hash_valid:
+                errors.append(f"retention requirement hash mismatch: expected {expected_hash.hex()}, manifest has {actual_hash_hex}")
+                failure_codes.append(AST_SCHEMA_MISMATCH)
+                ok = False
+                outcome = "fail"
+
     tps = token_count/elapsed if elapsed > 0 else 0.0
     return VerificationReport(
         ok=ok,
@@ -247,9 +415,9 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         retained_reconstructable_bytes=retained,
         minimum_reconstructable_bytes=minimum,
         retention_floor_margin_bytes=margin,
-        verifier_reconstruction_seconds_mean=elapsed,
-        verifier_reconstruction_seconds_p50=elapsed,
-        verifier_reconstruction_seconds_p95=elapsed,
+        verifier_reconstruction_seconds_mean=recon_mean,
+        verifier_reconstruction_seconds_p50=recon_p50,
+        verifier_reconstruction_seconds_p95=recon_p95,
         tokens_reconstructed_per_second=tps,
         chunks_reconstructed=chunks,
         span_events_overlaid=spans,
@@ -263,4 +431,5 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         ceiling_bytes_per_token=prof.ceiling_bytes_per_token,
         work_certificate=cert,
         retention_state="LOCAL_PASS",
+        retention_hash_valid=retention_hash_valid,
     )

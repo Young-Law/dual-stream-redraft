@@ -8,7 +8,7 @@ import struct
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .evidence_profile import get_evidence_profile
+from .evidence_profile import V33_HEADER_FIELD_RANGES, get_evidence_profile
 
 MAGIC = b"DSAEV29\0"
 VERSION_V31 = 0x0301
@@ -132,6 +132,40 @@ def _sha256(data: bytes) -> bytes:
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def compute_retention_requirement_hash(retention_requirement: str | dict | None) -> bytes:
+    """Compute SHA-256 of a retention requirement for the V3.3 manifest.
+
+    * If *retention_requirement* is a ``dict``, it is serialised as canonical
+      JSON (sorted keys, compact separators) before hashing.
+    * If it is a ``str``, the UTF-8 bytes are hashed directly (the caller is
+      responsible for ensuring it is already canonical JSON).
+    * If ``None``, ``ZERO_HASH`` is returned.
+    """
+    if retention_requirement is None:
+        return ZERO_HASH
+    if isinstance(retention_requirement, dict):
+        data = json.dumps(
+            retention_requirement, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    elif isinstance(retention_requirement, str):
+        data = retention_requirement.encode("utf-8")
+    else:
+        raise TypeError(
+            "retention_requirement must be str, dict, or None, "
+            f"got {type(retention_requirement).__name__}"
+        )
+    return _sha256(data)
+
+
+def _validate_v33_header_field(name: str, value: int) -> None:
+    """Raise ``ValueError`` if *value* is outside the registered range for *name*."""
+    lo, hi = V33_HEADER_FIELD_RANGES.get(name, (0, 0xFFFFFFFF))
+    if not (lo <= value <= hi):
+        raise ValueError(
+            f"V3.3 header field {name} value {value} is outside valid range [{lo}, {hi}]"
+        )
 
 
 def _int_hash(text: str | None, bits: int) -> int:
@@ -431,6 +465,7 @@ def encode_compact_sequence(
     canary_eval: bool = False,
     assurance_class: str = "DSA-R",
     tension_map: Any = None,
+    retention_requirement: str | dict | None = None,
 ) -> bytes:
     if wire_version == VERSION_V33:
         return encode_compact_sequence_v33(
@@ -448,6 +483,7 @@ def encode_compact_sequence(
             canary_eval=canary_eval,
             assurance_class=assurance_class,
             tension_map=tension_map,
+            retention_requirement=retention_requirement,
         )
     if wire_version != VERSION_V32:
         raise ValueError(f"unsupported compact evidence encode version 0x{wire_version:04x}")
@@ -600,6 +636,7 @@ def encode_compact_sequence_v33(
     canary_eval: bool = False,
     assurance_class: str = "DSA-R",
     tension_map: Any = None,
+    retention_requirement: str | dict | None = None,
 ) -> bytes:
     prof = get_evidence_profile(profile)
     if assurance_class != "DSA-R":
@@ -669,6 +706,7 @@ def encode_compact_sequence_v33(
 
     chunks, chunk_payloads = _encode_v33_chunks(records, prof.base_k, int(chunk_token_capacity))
     span_body = _encode_v33_spans(spans_norm, len(records))
+    hf = prof.v33_header_fields
     header = _HEADER_V33.pack(
         MAGIC,
         VERSION_V33,
@@ -676,8 +714,8 @@ def encode_compact_sequence_v33(
         0,
         sequence_id,
         sequence_id & 0xFFFFFFFF,
-        1,
-        1,
+        hf.tokenizer_id,
+        hf.signal_schema_id,
         signal_schema_hash,
         0,
         probe_pack_hash,
@@ -690,11 +728,11 @@ def encode_compact_sequence_v33(
         commitment,
         tension_map_id,
         tension_map_hash,
-        1,
+        hf.quantization_id,
         int(chunk_token_capacity),
-        1,
-        1,
-        1,
+        hf.verifier_work_profile_id,
+        hf.runtime_calibration_id,
+        hf.retention_policy_id,
         len(metadata_bytes),
         len(chunks),
         len(spans_norm),
@@ -705,6 +743,7 @@ def encode_compact_sequence_v33(
         len(records), len(chunks), len(spans_norm), len(metadata_bytes), chunk_payloads, span_body
     )
     raw_bytes = len(body_without_manifest) + _MANIFEST_V33.size
+    rr_hash = compute_retention_requirement_hash(retention_requirement)
     manifest_zero = _pack_v33_manifest(
         ZERO_HASH,
         _sha256(header),
@@ -715,7 +754,7 @@ def encode_compact_sequence_v33(
         raw_bytes,
         minimum_reconstructable,
         records,
-        ZERO_HASH,
+        rr_hash,
     )
     artifact_hash = _sha256(body_without_manifest + manifest_zero)
     manifest = _pack_v33_manifest(
@@ -728,7 +767,7 @@ def encode_compact_sequence_v33(
         raw_bytes,
         minimum_reconstructable,
         records,
-        ZERO_HASH,
+        rr_hash,
     )
     return body_without_manifest + manifest
 
@@ -1136,6 +1175,13 @@ def _decode_v33(buf: bytes) -> dict[str, Any]:
         raise ValueError("invalid V3.3 stochastic sampling rate")
     if chunk_token_capacity < 1:
         raise ValueError("invalid V3.3 chunk token capacity")
+    # P2: Validate V3.3 header field ranges
+    _validate_v33_header_field("tokenizer_id", tokenizer_id)
+    _validate_v33_header_field("signal_schema_id", signal_schema_id)
+    _validate_v33_header_field("quantization_id", quantization_id)
+    _validate_v33_header_field("verifier_work_profile_id", verifier_work_profile_id)
+    _validate_v33_header_field("runtime_calibration_id", runtime_calibration_id)
+    _validate_v33_header_field("retention_policy_id", retention_policy_id)
 
     pos = _HEADER_V33.size
     metadata_digest = buf[pos:pos + 32]

@@ -299,6 +299,178 @@ def cmd_kaggle_submit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_retention_issue(args: argparse.Namespace) -> int:
+    import hashlib
+    from .retention_lifecycle import issue_retention_requirement
+
+    artifact_path = Path(args.artifact)
+    if not artifact_path.exists():
+        print(f"ERROR: artifact not found: {artifact_path}")
+        return 1
+
+    artifact_bytes = artifact_path.read_bytes()
+    artifact_id = hashlib.sha256(artifact_bytes).hexdigest()
+
+    issuer_key = args.issuer_key.encode("utf-8")
+    req = issue_retention_requirement(
+        artifact_id=artifact_id,
+        profile_name=args.profile,
+        issuer_id=args.issuer_id,
+        issuer_key=issuer_key,
+        min_retention_days=args.min_retention_days,
+        max_artifact_bytes=args.max_artifact_bytes,
+    )
+
+    output = {
+        "artifact_id": artifact_id,
+        "profile_name": req.profile_name,
+        "issuer_id": req.issuer_id,
+        "min_retention_days": req.min_retention_days,
+        "max_artifact_bytes": req.max_artifact_bytes,
+        "issued_at": req.issued_at,
+        "expires_at": req.expires_at,
+        "nonce": req.nonce,
+        "requirement_hash": req.hash().hex(),
+        "signature": req.signature.hex(),
+    }
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_retention_verify_chain(args: argparse.Namespace) -> int:
+    import hashlib
+    from .retention_lifecycle import (
+        RetentionRequirement,
+        RetentionReceipt,
+        verify_receipt_chain,
+    )
+
+    # Load requirement JSON
+    req_path = Path(args.requirement)
+    if not req_path.exists():
+        print(f"ERROR: requirement file not found: {req_path}")
+        return 1
+    req_data = json.loads(req_path.read_text(encoding="utf-8"))
+    requirement = RetentionRequirement(
+        artifact_id=req_data["artifact_id"],
+        profile_name=req_data["profile_name"],
+        issuer_id=req_data["issuer_id"],
+        min_retention_days=req_data["min_retention_days"],
+        max_artifact_bytes=req_data["max_artifact_bytes"],
+        issued_at=req_data.get("issued_at"),
+        expires_at=req_data.get("expires_at"),
+        nonce=req_data.get("nonce", ""),
+        signature=bytes.fromhex(req_data.get("signature", "")),
+    )
+
+    # Load receipt JSON
+    rcpt_path = Path(args.receipt)
+    if not rcpt_path.exists():
+        print(f"ERROR: receipt file not found: {rcpt_path}")
+        return 1
+    rcpt_data = json.loads(rcpt_path.read_text(encoding="utf-8"))
+    receipt = RetentionReceipt(
+        requirement_hash=bytes.fromhex(rcpt_data["requirement_hash"]),
+        artifact_content_hash=bytes.fromhex(rcpt_data["artifact_content_hash"]),
+        storage_backend=rcpt_data["storage_backend"],
+        stored_bytes=rcpt_data["stored_bytes"],
+        stored_at=rcpt_data.get("stored_at"),
+        validator_id=rcpt_data.get("validator_id", ""),
+        nonce=rcpt_data.get("nonce", ""),
+        signature=bytes.fromhex(rcpt_data.get("signature", "")),
+    )
+
+    # Load artifact
+    artifact_path = Path(args.artifact)
+    if not artifact_path.exists():
+        print(f"ERROR: artifact not found: {artifact_path}")
+        return 1
+    artifact_bytes = artifact_path.read_bytes()
+
+    issuer_key = args.issuer_key.encode("utf-8")
+    validator_key = args.validator_key.encode("utf-8")
+
+    result = verify_receipt_chain(requirement, receipt, artifact_bytes, issuer_key, validator_key)
+
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    elif result["valid"]:
+        print(f"CHAIN VALID: requirement → receipt → artifact verified")
+    else:
+        print(f"CHAIN INVALID: {'; '.join(result['errors'])}")
+
+    return 0 if result["valid"] else 2
+
+
+def cmd_retention_challenge(args: argparse.Namespace) -> int:
+    """Issue a possession challenge, auto-respond, and verify the result."""
+    import hashlib
+    from .challenge import (
+        issue_possession_challenge,
+        respond_to_challenge,
+        verify_possession_challenge,
+    )
+
+    artifact_path = Path(args.artifact)
+    if not artifact_path.exists():
+        print(f"ERROR: artifact not found: {artifact_path}")
+        return 1
+
+    artifact_bytes = artifact_path.read_bytes()
+    artifact_id = hashlib.sha256(artifact_bytes).hexdigest()
+
+    challenger_key = args.challenger_key.encode("utf-8")
+    responder_key = args.responder_key.encode("utf-8")
+
+    # Issue challenge
+    challenge = issue_possession_challenge(
+        artifact_id=artifact_id,
+        artifact_bytes=artifact_bytes,
+        challenger_key=challenger_key,
+        start_offset=args.start_offset,
+        end_offset=args.end_offset,
+        ttl_seconds=args.ttl,
+    )
+
+    # Auto-respond (simulates holder proving possession)
+    response = respond_to_challenge(
+        challenge=challenge,
+        artifact_bytes=artifact_bytes,
+        responder_id=args.responder_id,
+        responder_key=responder_key,
+    )
+
+    # Verify
+    result = verify_possession_challenge(
+        challenge=challenge,
+        response=response,
+        challenger_key=challenger_key,
+    )
+
+    if args.json:
+        output = {
+            "challenge_id": challenge.challenge_id,
+            "artifact_id": challenge.artifact_id,
+            "start_offset": challenge.start_offset,
+            "end_offset": challenge.end_offset,
+            "valid": result["valid"],
+            "errors": result["errors"],
+            "signature": challenge.signature.hex(),
+            "response_signature": response.signature.hex(),
+        }
+        print(json.dumps(output, indent=2, sort_keys=True))
+    elif result["valid"]:
+        print(
+            f"CHALLENGE VERIFIED: artifact {artifact_id[:16]}… "
+            f"range [{challenge.start_offset}:{challenge.end_offset}] "
+            f"possession confirmed"
+        )
+    else:
+        print(f"CHALLENGE FAILED: {'; '.join(result['errors'])}")
+
+    return 0 if result["valid"] else 2
+
+
 
 def cmd_verify_evidence_budget(args: argparse.Namespace) -> int:
     from .verifier import verify_evidence_artifact
@@ -457,6 +629,36 @@ def build_parser() -> argparse.ArgumentParser:
     ks.add_argument("--output", required=True, help="Path to submission.json")
     add_solver_flags(ks)
     ks.set_defaults(func=cmd_kaggle_submit)
+
+    # P8: Retention lifecycle subcommands
+    ri = sub.add_parser("retention-issue", help="Issue a retention requirement for an artifact")
+    ri.add_argument("--artifact", required=True, help="Path to the artifact file")
+    ri.add_argument("--profile", default="DSA-CI-Lite", choices=["DSA-CI-Lite", "DSA-CI-Standard", "DSA-Deep", "DSA-Forensic"], help="Evidence profile name")
+    ri.add_argument("--issuer-id", default="local-governance", help="Issuer identifier")
+    ri.add_argument("--issuer-key", required=True, help="Symmetric UTF-8 issuer key for HMAC signing")
+    ri.add_argument("--min-retention-days", type=int, default=90, help="Minimum retention period in days")
+    ri.add_argument("--max-artifact-bytes", type=int, default=10_000_000, help="Maximum artifact size in bytes")
+    ri.set_defaults(func=cmd_retention_issue)
+
+    rvc = sub.add_parser("retention-verify-chain", help="Verify a full requirement→receipt→artifact chain")
+    rvc.add_argument("--requirement", required=True, help="Path to requirement JSON")
+    rvc.add_argument("--receipt", required=True, help="Path to receipt JSON")
+    rvc.add_argument("--artifact", required=True, help="Path to the artifact file")
+    rvc.add_argument("--issuer-key", required=True, help="Symmetric UTF-8 issuer key")
+    rvc.add_argument("--validator-key", required=True, help="Symmetric UTF-8 validator key")
+    rvc.add_argument("--json", action="store_true", help="Output structured JSON")
+    rvc.set_defaults(func=cmd_retention_verify_chain)
+
+    rc = sub.add_parser("retention-challenge", help="Issue and verify a possession challenge for an artifact")
+    rc.add_argument("--artifact", required=True, help="Path to the artifact file")
+    rc.add_argument("--challenger-key", required=True, help="Symmetric UTF-8 key for the challenger")
+    rc.add_argument("--responder-key", required=True, help="Symmetric UTF-8 key for the responder")
+    rc.add_argument("--responder-id", default="local-holder", help="Responder identifier")
+    rc.add_argument("--start-offset", type=int, default=0, help="Byte range start")
+    rc.add_argument("--end-offset", type=int, default=None, help="Byte range end (default: full artifact)")
+    rc.add_argument("--ttl", type=int, default=300, help="Challenge time-to-live in seconds")
+    rc.add_argument("--json", action="store_true", help="Output structured JSON")
+    rc.set_defaults(func=cmd_retention_challenge)
 
     return p
 
