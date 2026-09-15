@@ -177,7 +177,7 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
                 for rec in records:
                     if rec.trigger_flags & ~31 or rec.record_flags & ~ce.RECORD_HAS_FALLBACK_CHOSEN_ID:
                         raise ValueError('unknown V3.3 token flags')
-                    candidate_ids = [candidate.token_id for candidate in rec.topk]
+                    candidate_ids = rec.topk_ids
                     if len(candidate_ids) != len(set(candidate_ids)):
                         raise ValueError('duplicate V3.3 candidate token IDs are not allowed')
                     if primary:
