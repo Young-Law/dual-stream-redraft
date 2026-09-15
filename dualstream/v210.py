@@ -60,10 +60,14 @@ def decode_v33(data: bytes) -> dict[str, Any]:
     return decoded
 
 
-def verify_v33(data: bytes, *, audit_keys: dict[int, bytes] | None = None) -> dict[str, Any]:
+def verify_v33(data: bytes, *, audit_keys: dict[int, bytes] | None = None, tension_maps: dict[int, Any] | None = None) -> dict[str, Any]:
     decoded = decode_v33(data)
-    if audit_keys is not None:
-        verify_keyed_replay(decoded, audit_keys)
+    meta = decoded["meta"]
+    keyed = bool(meta.get("stochastic_rate_ppm")) or meta.get("audit_selection_commitment") != "0" * 64
+    if keyed:
+        if audit_keys is None:
+            raise ValueError("keyed artifact requires audit keys for LOCAL_PASS")
+        verify_keyed_replay(decoded, audit_keys, tension_maps=tension_maps)
     return {
         "outcome": "LOCAL_PASS",
         "errors": [],

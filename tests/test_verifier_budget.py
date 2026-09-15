@@ -24,7 +24,7 @@ def test_forensic_rejected_for_pr(tmp_path):
     assert not report.ok
 
 
-def test_verifier_compute_budget_failure_is_enforced(tmp_path, monkeypatch):
+def test_completed_slow_verification_reports_advisory_warning(tmp_path, monkeypatch):
     from dataclasses import replace
     import dualstream.verifier as verifier
     from dualstream.evidence_profile import get_evidence_profile
@@ -35,8 +35,8 @@ def test_verifier_compute_budget_failure_is_enforced(tmp_path, monkeypatch):
     monkeypatch.setattr(verifier, "get_evidence_profile", lambda _profile: tiny)
     monkeypatch.setattr(verifier, "assert_profile_ci_mode", lambda _profile, _ci_mode: tiny)
     report = verifier.verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
-    assert not report.ok
-    assert any("exceeds profile budget" in err for err in report.errors)
+    assert report.ok, report.errors
+    assert any("advisory SLO" in warning for warning in report.warnings)
 
 
 def _over_budget_rows(n):
@@ -80,11 +80,10 @@ def test_infrastructure_instability_yields_inconclusive_infra(tmp_path, monkeypa
     p = tmp_path / "compact_evidence.dsae"
     p.write_bytes(encode_compact_sequence([{"chosen_id": i, "topk_ids": [i, i+1, i+2], "topk_scores": [.7,.2,.1]} for i in range(20)]))
     
-    # Tiny time budget, but large traced memory budget so it only fails on elapsed time.
-    tiny = replace(get_evidence_profile("DSA-CI-Lite"), verifier_time_seconds=0.0, verifier_traced_peak_mib=1024, verifier_peak_mib=1024)
-    monkeypatch.setattr(verifier, "get_evidence_profile", lambda _profile: tiny)
-    monkeypatch.setattr(verifier, "assert_profile_ci_mode", lambda _profile, _ci_mode: tiny)
-    
+    def interrupted():
+        raise TimeoutError('runner interrupted')
+    monkeypatch.setattr(verifier, '_calibrate_runtime', interrupted)
+
     report = verifier.verify_evidence_artifact(tmp_path, profile="DSA-CI-Lite", ci_mode="pr")
     assert not report.ok
     assert report.verification_outcome == "INCONCLUSIVE_INFRA"

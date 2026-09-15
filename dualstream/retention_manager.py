@@ -101,6 +101,8 @@ class RetentionPipelineResult:
     chain_result: Optional[Dict[str, Any]] = None
     started_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
+    assurance_scope: str = "local_research_validation"
+    independent_retention_attested: bool = False
 
     @property
     def elapsed_seconds(self) -> float:
@@ -108,6 +110,8 @@ class RetentionPipelineResult:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "assurance_scope": self.assurance_scope,
+            "independent_retention_attested": self.independent_retention_attested,
             "artifact_id": self.artifact_id,
             "overall_status": self.overall_status.value,
             "steps": [
@@ -151,6 +155,9 @@ class RetentionPipeline:
         validator_key: bytes = b"",
         challenger_key: bytes = b"",
     ) -> None:
+        keys = (issuer_key, validator_key, challenger_key)
+        if any(not key for key in keys) or len(set(keys)) != len(keys):
+            raise ValueError("Three distinct nonempty role keys required")
         self.storage = storage_backend or LocalFilesystemBackend("/tmp/dsa-artifacts")
         self.issuer_key = issuer_key
         self.validator_key = validator_key
@@ -199,7 +206,16 @@ class RetentionPipeline:
 
         # Step 1: Issue requirement
         try:
+            from .compact_evidence import decode_compact_sequence
+            decoded = decode_compact_sequence(artifact_bytes)
+            if decoded["header"].profile_id != profile_name:
+                raise ValueError("Artifact profile differs from requirement")
+            if len(artifact_bytes) > max_artifact_bytes:
+                raise ValueError("Artifact exceeds requirement byte bound")
+            if not issuer_id or not validator_id or issuer_id == validator_id:
+                raise ValueError("Distinct nonempty issuer and validator identities required")
             req = issue_retention_requirement(
+                artifact_content_hash=hashlib.sha256(artifact_bytes).digest(),
                 artifact_id=artifact_id,
                 profile_name=profile_name,
                 issuer_id=issuer_id,
@@ -248,7 +264,7 @@ class RetentionPipeline:
         try:
             receipt = issue_retention_receipt(
                 requirement=req,
-                artifact_bytes=artifact_bytes,
+                artifact_bytes=self.storage.retrieve(artifact_id) or b"",
                 storage_backend=type(self.storage).__name__,
                 validator_id=validator_id,
                 validator_key=self.validator_key,
@@ -263,7 +279,7 @@ class RetentionPipeline:
             return result
 
         # Step 5: Possession challenge (optional)
-        if run_possession_challenge and self.challenger_key:
+        if run_possession_challenge:
             try:
                 challenge = issue_possession_challenge(
                     artifact_id=artifact_id,
@@ -272,7 +288,7 @@ class RetentionPipeline:
                 )
                 response = respond_to_challenge(
                     challenge=challenge,
-                    artifact_bytes=artifact_bytes,
+                    artifact_bytes=self.storage.retrieve(artifact_id) or b"",
                     responder_id=validator_id,
                     responder_key=self.validator_key,
                 )
@@ -280,6 +296,8 @@ class RetentionPipeline:
                     challenge=challenge,
                     response=response,
                     challenger_key=self.challenger_key,
+                    responder_key=self.validator_key,
+                    expected_responder_id=validator_id,
                 )
                 result.challenge_result = challenge_result
                 if challenge_result["valid"]:
@@ -296,7 +314,7 @@ class RetentionPipeline:
             chain = verify_receipt_chain(
                 requirement=result.requirement,
                 receipt=result.receipt,
-                artifact_bytes=artifact_bytes,
+                artifact_bytes=self.storage.retrieve(artifact_id) or b"",
                 issuer_key=self.issuer_key,
                 validator_key=self.validator_key,
             )
@@ -356,14 +374,16 @@ class RetentionPipeline:
         if not self.challenger_key:
             return {"all_passed": False, "results": [], "summary": "no challenger key configured"}
 
+        if num_challenges <= 0 or not artifact_bytes:
+            return {"all_passed": False, "results": [], "summary": "Positive challenge count and nonempty artifact required"}
         total_len = len(artifact_bytes)
         results = []
         all_passed = True
 
         for i in range(num_challenges):
-            import random
-            start = random.randint(0, max(0, total_len - 1))
-            end = min(total_len, start + random.randint(64, min(4096, total_len - start + 1)))
+            import secrets
+            start = secrets.randbelow(total_len)
+            end = min(total_len, start + 4096)
 
             challenge = issue_possession_challenge(
                 artifact_id=artifact_id,
@@ -372,9 +392,14 @@ class RetentionPipeline:
                 start_offset=start,
                 end_offset=end,
             )
+            stored = self.storage.retrieve(artifact_id)
+            if stored is None or len(stored) < end:
+                results.append({"challenge_index": i, "valid": False, "errors": ["Stored artifact missing or truncated"]})
+                all_passed = False
+                continue
             response = respond_to_challenge(
                 challenge=challenge,
-                artifact_bytes=artifact_bytes,
+                artifact_bytes=stored,
                 responder_id="audit-responder",
                 responder_key=self.validator_key,
             )
@@ -382,6 +407,8 @@ class RetentionPipeline:
                 challenge=challenge,
                 response=response,
                 challenger_key=self.challenger_key,
+                responder_key=self.validator_key,
+                expected_responder_id="audit-responder",
             )
             results.append({
                 "challenge_index": i,

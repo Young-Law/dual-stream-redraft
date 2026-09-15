@@ -4,6 +4,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import math
 import struct
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -118,7 +119,10 @@ class EvidenceManifestV33:
 
 
 def quantize_score(score: float) -> int:
-    return max(0, min(255, int(round(float(score) * SCORE_SCALE))))
+    value = float(score)
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError("probability/score must be finite and between zero and one")
+    return int(round(value * SCORE_SCALE))
 
 
 def dequantize_score(raw: int) -> float:
@@ -142,12 +146,17 @@ def compute_retention_requirement_hash(retention_requirement: str | dict | None)
     * If it is a ``str``, the UTF-8 bytes are hashed directly (the caller is
       responsible for ensuring it is already canonical JSON).
     * If ``None``, ``ZERO_HASH`` is returned.
+
+    This embedded commitment is to a pre-artifact policy, never to the signed
+    artifact-bound requirement issued after finalization. That requirement is
+    detached, avoiding a circular dependency. The artifact content hash zeros
+    only its own 32-byte manifest field; it includes this policy commitment.
     """
     if retention_requirement is None:
         return ZERO_HASH
     if isinstance(retention_requirement, dict):
         data = json.dumps(
-            retention_requirement, sort_keys=True, separators=(",", ":")
+            retention_requirement, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("utf-8")
     elif isinstance(retention_requirement, str):
         data = retention_requirement.encode("utf-8")
@@ -308,12 +317,16 @@ def audit_selection_commitment(
     return hmac.new(key, public, hashlib.sha256).digest()
 
 
-def _commit_identity(records: list[CompactTokenEvidenceV3], base_k: int) -> str:
+def _commit_identity(records: list[CompactTokenEvidenceV3], base_k: int, hash_observer=None) -> str:
     h = hashlib.sha256()
     for rec in records:
         h.update(struct.pack("<II", rec.token_index, rec.chosen_id))
+        if hash_observer is not None:
+            hash_observer(8)
         for token_id, score in zip(rec.topk_ids[:base_k], rec.topk_scores[:base_k]):
             h.update(_TOPK_V33.pack(int(token_id), quantize_score(score)))
+            if hash_observer is not None:
+                hash_observer(_TOPK_V33.size)
     return h.hexdigest()
 
 
@@ -323,6 +336,7 @@ def _pre_stochastic_eligibility_digest(
     base_k: int,
     max_adaptive_rank: int,
     adaptive_k: bool,
+    hash_observer=None,
 ) -> str:
     """Hash canonical rank/history/canary eligibility before keyed sampling.
 
@@ -337,6 +351,8 @@ def _pre_stochastic_eligibility_digest(
         history = bool(rec.trigger_flags & TRIGGER_HISTORY)
         canary = bool(rec.trigger_flags & TRIGGER_CANARY)
         h.update(struct.pack("<IBBB", rec.token_index, int(rank), int(history), int(canary)))
+        if hash_observer is not None:
+            hash_observer(7)
     return h.hexdigest()
 
 
@@ -409,9 +425,10 @@ def _apply_v33_triggers(
                 canary_eval=canary_eval,
             ):
                 flags |= TRIGGER_STOCHASTIC
-                effective_topk = max(effective_topk, min(max_adaptive_rank, len(rec.topk_ids)))
+                effective_topk = max(effective_topk, max_adaptive_rank)
 
-        effective_topk = min(effective_topk, len(rec.topk_ids), max_adaptive_rank)
+        if len(rec.topk_ids) < effective_topk:
+            raise ValueError(f"token {rec.token_index} requires {effective_topk} candidates, got {len(rec.topk_ids)}")
         kept_ids = rec.topk_ids[:effective_topk]
         kept_scores = rec.topk_scores[:effective_topk]
         chosen_rank = kept_ids.index(rec.chosen_id) + 1 if rec.chosen_id in kept_ids else 255
@@ -611,6 +628,10 @@ def _normalise_v33_source_tokens(tokens: Iterable[Any], max_rank: int) -> list[C
         else:
             ids = [int(x) for x in (item["topk_ids"] if is_dict else getattr(item, "topk_ids"))]
             scores = [float(x) for x in (item["topk_scores"] if is_dict else getattr(item, "topk_scores"))]
+        if len(ids) != len(scores) or len(set(ids)) != len(ids):
+            raise ValueError("candidate IDs/scores must have equal lengths and unique IDs")
+        for score in scores:
+            quantize_score(score)
         kept_ids = tuple(ids[:max_rank])
         kept_scores = tuple(scores[:max_rank])
         chosen_rank = kept_ids.index(chosen_id) + 1 if chosen_id in kept_ids else 255
@@ -688,6 +709,10 @@ def encode_compact_sequence_v33(
         "adaptive_policy": adaptive_policy,
         "commit_identity": commit_identity,
         "pre_stochastic_eligibility_digest": eligibility_digest,
+        "score_representation": "pre-control-softmax-probability",
+        "quantization": "uint8-nearest-ties-even-p255",
+        "quantization_max_absolute_error": SCORE_TOLERANCE,
+        "topk_renormalized": False,
         "prompt_nonce": sequence_id,
         "benchmark_id": benchmark_id,
         "canary_eval": canary_eval,
@@ -1321,6 +1346,8 @@ def _decode_v33(buf: bytes) -> dict[str, Any]:
             "prompt_nonce": metadata.get("prompt_nonce", prompt_nonce),
             "pre_stochastic_eligibility_digest": metadata.get("pre_stochastic_eligibility_digest", ""),
             "header_prompt_nonce": prompt_nonce,
+            "tension_map_id": tension_map_id,
+            "tension_map_hash": tension_map_hash.hex(),
         },
         "manifest": manifest,
         "sha256": hashlib.sha256(buf).hexdigest(),
@@ -1425,6 +1452,7 @@ def _manifest_from_fields(fields: tuple[Any, ...]) -> EvidenceManifestV33:
 
 
 def _manifest_with_zero_hash(manifest: bytes) -> bytes:
+    """Canonical preimage: replace only the leading content hash with 32 zeros."""
     return ZERO_HASH + manifest[32:]
 
 
@@ -1443,7 +1471,7 @@ def decode_compact_sequence(buf: bytes) -> dict[str, Any]:
     raise ValueError(f"unsupported compact evidence version 0x{version:04x}")
 
 
-def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, bytes]) -> None:
+def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, bytes], *, tension_maps: dict[int, Any] | None = None, hash_observer=None) -> None:
     data = decode_compact_sequence(decoded) if isinstance(decoded, (bytes, bytearray)) else decoded
     if data["header"].schema_version != VERSION_V33:
         return
@@ -1514,7 +1542,7 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
     if not canary_eval and any(rec.trigger_flags & TRIGGER_CANARY for rec in data["tokens"]):
         raise ValueError("pre-stochastic eligibility has canary evidence without an authenticated evaluation label")
 
-    recomputed_commit = _commit_identity(data["tokens"], base_k)
+    recomputed_commit = _commit_identity(data["tokens"], base_k, hash_observer)
     if not hmac.compare_digest(recomputed_commit, commit_identity):
         raise ValueError("commit identity mismatch")
     eligibility_digest = _pre_stochastic_eligibility_digest(
@@ -1522,6 +1550,7 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
         base_k=base_k,
         max_adaptive_rank=max_adaptive_k,
         adaptive_k=adaptive_k,
+        hash_observer=hash_observer,
     )
     if not hmac.compare_digest(eligibility_digest, serialized_eligibility):
         raise ValueError("pre-stochastic eligibility mismatch")
@@ -1544,11 +1573,21 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
     if not hmac.compare_digest(expected_commitment, commitment):
         raise ValueError("audit selection commitment mismatch")
 
+    map_id = meta.get("tension_map_id", 0)
+    expected_history = None
+    if map_id:
+        tension_map = (tension_maps or {}).get(map_id)
+        if tension_map is None or tension_map.content_hash.hex() != meta.get("tension_map_hash"):
+            raise ValueError("unknown or mismatched tension map")
+        expected_history = tension_map.evaluate_triggers({"benchmark_family_id": benchmark_id})
+
     for rec in data["tokens"]:
         raw_rank = rec.chosen_rank if rec.chosen_rank != 255 else max_adaptive_k + 1
         rank_eligible = adaptive_k and base_k < raw_rank <= max_adaptive_k
         history_eligible = bool(rec.trigger_flags & TRIGGER_HISTORY)
         canary_eligible = bool(rec.trigger_flags & TRIGGER_CANARY)
+        if expected_history is not None and history_eligible != expected_history:
+            raise ValueError("history trigger does not match tension map")
         if bool(rec.trigger_flags & TRIGGER_RANK) != rank_eligible:
             raise ValueError("pre-stochastic rank eligibility mismatch")
         otherwise_untriggered = not (rank_eligible or history_eligible or canary_eligible)
@@ -1572,6 +1611,9 @@ def verify_keyed_replay(decoded: dict[str, Any] | bytes, audit_keys: dict[int, b
         observed = bool(rec.trigger_flags & TRIGGER_STOCHASTIC)
         if observed != expected:
             raise ValueError("keyed stochastic selection replay mismatch")
+        required_k = max_adaptive_k if expected or (history_eligible and map_id) else max(base_k, raw_rank if rank_eligible else base_k)
+        if rec.effective_topk < required_k:
+            raise ValueError("selected token has insufficient candidate width")
 
 def reconstruct_token_evidence(buf_or_decoded: bytes | dict[str, Any]) -> list[dict[str, Any]]:
     decoded = decode_compact_sequence(buf_or_decoded) if isinstance(buf_or_decoded, (bytes, bytearray)) else buf_or_decoded
