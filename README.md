@@ -248,15 +248,17 @@ Compact evidence decoding now dispatches by wire version before interpreting lay
 - `not_evaluated_due_to_structural_failure`: decode, metadata binding, or structural verification failed before profile byte-budget evaluation could be computed.
 
 
-## DSA v2.10 Phase 1 status
+## DSA v2.10 implementation status
 
-The repository implements the compact binary V3.3 evidence wire foundation, integrated model-generation path, legacy decoding compatibility, canonical artifact hashing, and authorized keyed-selection replay. Portable verifier governance, signed tension-map governance, and complete end-to-end retention assurance remain under implementation.
+The repository implements the compact binary V3.3 evidence wire foundation, integrated model-generation path, legacy decoding compatibility, canonical artifact hashing, authorized keyed-selection replay, bounded streaming verification with portable work certificates, signed tension-map governance checks, and the software retention lifecycle (signed requirements, receipts, chain verification, and possession challenges).
 
 V3.3 (`0x0303`) compact evidence starts with the existing compact-family magic and an explicit binary version field. V3.1 (`0x0301`) and V3.2 (`0x0302`) artifacts remain readable through version-specific legacy decoders and are not reinterpreted as V3.3.
 
-New compact-evidence generation defaults to V3.3 through `compact_wire_version=0x0303`; V3.2 remains available through an explicit compatibility option. The software-only implementation does not claim DSA-P assurance, which requires device-bound evidence and valid independent retention receipts.
+New compact-evidence generation defaults to V3.3 through `compact_wire_version=0x0303`; V3.2 remains available through an explicit compatibility option. The implementation remains **DSA-R software assurance**: it does not claim DSA-P device/enclave assurance, independent-validator deployment, or compromised-host resistance without external attestation infrastructure.
 
-Run local Phase 1 conformance with:
+The release-candidate baseline after PRs #36 and #37 is commit `bb051143cc97c675311d10df5e6832e8435ca2fe`. GitHub Actions run `35012133191` passed the v2.10 conformance command, the full pytest suite, and portable-certificate checks on Ubuntu, Windows, and macOS.
+
+Run local v2.10 conformance with:
 
 ```bash
 python -m dualstream.cli conformance v2.10
@@ -265,4 +267,4 @@ python -m pytest tests/test_v210_conformance.py
 
 ## v2.10.1 review corrections
 
-See [the review correction contract](docs/v2.10_review_corrections.md) for pre-control probability semantics and quantization loss, acyclic detached retention signing, fail-closed verification, storage proof requirements, and event-level sampling limits. These fixes strengthen the research implementation; model-detection efficacy, independent validator operation, cross-platform performance, and DSA-P attestation still require separate evidence.
+See [the review correction contract](docs/v2.10_review_corrections.md) for pre-control probability semantics and quantization loss, acyclic detached retention signing, fail-closed verification, storage proof requirements, and event-level sampling limits. These fixes strengthen the research implementation; model-detection efficacy, independent validator operation, cross-platform performance beyond the portable-certificate conformance check, and DSA-P attestation still require separate evidence.
