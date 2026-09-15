@@ -2,11 +2,37 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import yaml
+
+
+def canonical_tension_map_payload(data: dict[str, Any]) -> bytes:
+    """Return the canonical bytes authenticated by a tension-map signature.
+
+    Every parsed map field is covered except the signature block itself. This
+    deliberately authenticates behavior-affecting fields such as expiry and
+    widening_action, and it makes subsequently added policy fields signed by
+    default instead of requiring a hand-maintained allowlist.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("invalid tension map: expected dictionary")
+    unsigned = {key: value for key, value in data.items() if key != "signature"}
+    try:
+        canonical = json.dumps(
+            unsigned,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("tension map contains non-canonical policy values") from exc
+    return canonical.encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -20,7 +46,7 @@ class TensionRule:
     def applies_to(self, context: dict[str, Any]) -> bool:
         if self.expiry is not None and time.time() > self.expiry:
             return False
-        
+
         # Simple string matching for now, expand based on selector_type
         if self.selector_type == "prompt_template_hash":
             return context.get("prompt_template_hash") == self.selector_value
@@ -48,40 +74,50 @@ class TensionMap:
     def parse_and_verify(cls, yaml_content: str | bytes, tension_keys: dict[str, bytes] | None = None) -> TensionMap:
         if isinstance(yaml_content, bytes):
             yaml_content = yaml_content.decode("utf-8")
-            
+
         data = yaml.safe_load(yaml_content)
         if not isinstance(data, dict):
             raise ValueError("invalid tension map: expected dictionary")
-            
+
         map_id = data.get("map_id", 0)
         signature_meta = data.get("signature")
-        
-        # To verify signature, we sign the canonicalized YAML without the signature block
-        # For simplicity, we just sign the map_id and rules in a stable way
+
+        # Authenticate the complete parsed policy document, excluding only the
+        # signature container itself. Formatting and YAML comments do not affect
+        # the signature, while every semantic policy field does.
         if tension_keys is not None and signature_meta:
+            if not isinstance(signature_meta, dict):
+                raise ValueError("invalid tension map signature metadata")
             signer_id = signature_meta.get("signer_id", "")
             key = tension_keys.get(signer_id)
             if not key:
                 raise ValueError("tension map signed by unknown key")
-            
-            # Reconstruct signed payload (simplified for demonstration)
-            payload = f"{map_id}:" + ",".join(f"{r['rule_id']}={r['selector_type']}={r['selector_value']}" for r in data.get("rules", []))
-            expected = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(expected, signature_meta.get("hash", "")):
+
+            payload = canonical_tension_map_payload(data)
+            expected = hmac.new(key, payload, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, str(signature_meta.get("hash", ""))):
                 raise ValueError("tension map signature mismatch")
         elif tension_keys is not None:
             raise ValueError("tension map requires signature when keys are provided")
-            
+
         rules = []
-        for r in data.get("rules", []):
+        raw_rules = data.get("rules", [])
+        if not isinstance(raw_rules, list):
+            raise ValueError("invalid tension map: rules must be a list")
+        for r in raw_rules:
+            if not isinstance(r, dict):
+                raise ValueError("invalid tension map: each rule must be a dictionary")
+            expiry = float(r["expiry"]) if "expiry" in r else None
+            if expiry is not None and not math.isfinite(expiry):
+                raise ValueError("invalid tension map: expiry must be finite")
             rules.append(TensionRule(
                 rule_id=str(r.get("rule_id", "")),
                 selector_type=str(r.get("selector_type", "")),
                 selector_value=str(r.get("selector_value", "")),
                 widening_action=str(r.get("widening_action", "widen")),
-                expiry=float(r["expiry"]) if "expiry" in r else None
+                expiry=expiry,
             ))
-            
+
         content_hash = hashlib.sha256(yaml_content.encode("utf-8")).digest()
         return cls(map_id=int(map_id), content_hash=content_hash, rules=rules)
 
