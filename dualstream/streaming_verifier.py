@@ -90,6 +90,11 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
                             ('quantization_id', quantization), ('verifier_work_profile_id', work),
                             ('runtime_calibration_id', calibration), ('retention_policy_id', retention)]:
             ce._validate_v33_header_field(name, value)
+        expected_fields = prof.v33_header_fields
+        if quantization != expected_fields.quantization_id:
+            raise ValueError('unsupported V3.3 quantization identifier for declared profile')
+        if work != expected_fields.verifier_work_profile_id:
+            raise ValueError('unsupported V3.3 verifier work-profile identifier for declared profile')
         meta_hash = read(32)
         meta_bytes = read(meta_len)
         if digest(meta_bytes) != meta_hash:
@@ -172,6 +177,9 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
                 for rec in records:
                     if rec.trigger_flags & ~31 or rec.record_flags & ~ce.RECORD_HAS_FALLBACK_CHOSEN_ID:
                         raise ValueError('unknown V3.3 token flags')
+                    candidate_ids = [candidate.token_id for candidate in rec.topk]
+                    if len(candidate_ids) != len(set(candidate_ids)):
+                        raise ValueError('duplicate V3.3 candidate token IDs are not allowed')
                     if primary:
                         k = rec.effective_topk
                         hist[next(b for b in (3, 5, 10, 255) if k <= b)] += 1
