@@ -6,6 +6,8 @@ verifier, tension map) alongside the original generation/ARC/script job APIs.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import time
 from dataclasses import asdict
@@ -438,15 +440,26 @@ def trigger_signals() -> dict:
 
 @app.post("/v210/retention/pipeline")
 def retention_pipeline(payload: dict) -> dict:
-    """Run the full retention assurance pipeline."""
+    """Run the full retention assurance pipeline.
+
+    Compact evidence must be supplied as base64 in ``compact_evidence_b64``.
+    The legacy ``content`` text field remains available for non-retention callers,
+    but is rejected here because the retention pipeline binds the compact artifact.
+    """
     from .retention_manager import RetentionPipeline
     from .storage_validator import LocalFilesystemBackend
 
     artifact_id = payload.get("artifact_id", f"artifact-{int(time.time()*1000)}")
-    content = payload.get("content", "")
-    artifact_bytes = content.encode("utf-8") if content else b""
+    encoded = payload.get("compact_evidence_b64", "")
+    if encoded:
+        try:
+            artifact_bytes = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="compact_evidence_b64 must be valid base64") from exc
+    else:
+        raise HTTPException(status_code=400, detail="compact_evidence_b64 is required for the retention pipeline")
     if not artifact_bytes:
-        raise HTTPException(status_code=400, detail="content is required")
+        raise HTTPException(status_code=400, detail="compact_evidence_b64 decodes to an empty artifact")
 
     storage_dir = payload.get("storage_dir", "/tmp/dsa-retention-web")
     pipeline = RetentionPipeline(
@@ -482,6 +495,7 @@ def retention_challenge(payload: dict) -> dict:
 
     challenger_key = (payload.get("challenger_key") or "web-challenger-key").encode()
     responder_key = (payload.get("responder_key") or "web-responder-key").encode()
+    responder_id = payload.get("responder_id", "web-responder")
 
     challenge = issue_possession_challenge(
         artifact_id=artifact_id,
@@ -491,13 +505,15 @@ def retention_challenge(payload: dict) -> dict:
     response = respond_to_challenge(
         challenge=challenge,
         artifact_bytes=artifact_bytes,
-        responder_id=payload.get("responder_id", "web-responder"),
+        responder_id=responder_id,
         responder_key=responder_key,
     )
     verify_result = verify_possession_challenge(
         challenge=challenge,
         response=response,
         challenger_key=challenger_key,
+        responder_key=responder_key,
+        expected_responder_id=responder_id,
     )
 
     return {
