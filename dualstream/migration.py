@@ -40,78 +40,47 @@ def verify_after_transform(
     retention_floor_bytes: int = 0,
     allowed_transforms: Optional[list[AllowedTransform]] = None,
 ) -> MigrationVerificationResult:
-    """
-    Verify an artifact after a storage transformation.
-    
-    For TRANSFORM_NONE, TRANSFORM_COMPRESS, TRANSFORM_ENCRYPT, TRANSFORM_REPLICATE:
-      - Decompress/decrypt/compare to verify content integrity
-    For TRANSFORM_REENCODE:
-      - Verify the transformed artifact decodes to the same token sequence
-    For TRANSFORM_PARTITION:
-      - Verify reassembled parts match original
-    
-    Since we can't do actual decompression/decryption without knowing the specific 
-    algorithm, we verify:
-    1. The transform is in the allowed list
-    2. The original hash is preserved in the verification result
-    3. The retention floor is met (transformed size >= floor for uncompressed transforms)
+    """Verify restored canonical bytes. Only replication and zlib/gzip are implemented.
+
+    Encryption, partitioning and reencoding require explicit reconstruction
+    adapters; unsupported transforms fail closed instead of inferring integrity.
     """
     errors = []
     original_hash = hashlib.sha256(original_bytes).digest()
     transformed_hash = hashlib.sha256(transformed_bytes).digest()
-    
-    # 1. Check transform is allowed
+    restored = transformed_bytes
     if allowed_transforms is not None and transform not in allowed_transforms:
-        errors.append(f"Transform '{transform.value}' not in allowed list")
-    
-    content_intact = True
-    
-    # 2. For lossless transforms, verify we can round-trip
-    if transform == AllowedTransform.TRANSFORM_NONE:
-        content_intact = original_bytes == transformed_bytes
-        if not content_intact:
-            errors.append("Content changed with TRANSFORM_NONE")
-    elif transform == AllowedTransform.TRANSFORM_COMPRESS:
-        # Verify compressed form is actually smaller
-        if len(transformed_bytes) >= len(original_bytes):
-            errors.append(f"Compressed artifact ({len(transformed_bytes)}B) not smaller than original ({len(original_bytes)}B)")
-            content_intact = False
-    elif transform == AllowedTransform.TRANSFORM_REPLICATE:
-        content_intact = original_hash == transformed_hash
-        if not content_intact:
-            errors.append("Replicated artifact hash differs from original")
-    elif transform == AllowedTransform.TRANSFORM_ENCRYPT:
-        # Encrypted data should be different from original
-        if original_hash == transformed_hash:
-            errors.append("Encrypted artifact hash identical to original — not actually encrypted?")
-    elif transform == AllowedTransform.TRANSFORM_REENCODE:
-        # Re-encoding may change byte representation but should preserve semantics
-        # We can't fully verify without decoding both, so just check it's non-empty
-        if len(transformed_bytes) == 0:
-            errors.append("Re-encoded artifact is empty")
-            content_intact = False
-    elif transform == AllowedTransform.TRANSFORM_PARTITION:
-        # Partitioned artifact is a subset — can't do full comparison
-        # Just verify non-empty
-        if len(transformed_bytes) == 0:
-            errors.append("Partitioned artifact is empty")
-            content_intact = False
-    
-    # 3. Retention floor check
-    retention_floor_met = True
-    if retention_floor_bytes > 0:
-        if transform in (AllowedTransform.TRANSFORM_NONE, AllowedTransform.TRANSFORM_REPLICATE):
-            if len(transformed_bytes) < retention_floor_bytes:
-                errors.append(f"Transformed size {len(transformed_bytes)} below retention floor {retention_floor_bytes}")
-                retention_floor_met = False
-    
+        errors.append("Transform not in allowed list")
+    if transform == AllowedTransform.TRANSFORM_COMPRESS:
+        import zlib
+        try:
+            decoder = zlib.decompressobj(wbits=47)
+            # Bound decompression by trusted original size, including malformed bombs.
+            restored = decoder.decompress(transformed_bytes, len(original_bytes) + 1)
+            if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+                raise ValueError("Incomplete, oversized, or trailing compressed stream")
+        except (zlib.error, ValueError) as exc:
+            errors.append(f"Cannot reconstruct compressed artifact: {exc}")
+            restored = b""
+    elif transform not in (AllowedTransform.TRANSFORM_NONE, AllowedTransform.TRANSFORM_REPLICATE):
+        errors.append("Transform reconstruction adapter not implemented")
+        restored = b""
+    content_intact = restored == original_bytes
+    if not content_intact:
+        errors.append("Restored artifact differs from original")
+    try:
+        from .compact_evidence import decode_compact_sequence
+        decoded = decode_compact_sequence(restored)
+        manifest = decoded.get("manifest")
+        canonical_floor = manifest.minimum_reconstructable_bytes if manifest else len(restored)
+    except Exception as exc:
+        errors.append(f"Restored artifact does not fully decode: {exc}")
+        content_intact = False
+        canonical_floor = len(original_bytes)
+    retention_floor_met = retention_floor_bytes >= 0 and len(restored) >= max(retention_floor_bytes, canonical_floor)
+    if not retention_floor_met:
+        errors.append("Restored artifact below retention floor")
     return MigrationVerificationResult(
-        valid=len(errors) == 0,
-        transform=transform.value,
-        original_hash=original_hash,
-        transformed_hash=transformed_hash,
-        content_intact=content_intact,
-        retention_floor_met=retention_floor_met,
-        verified_at=time.time(),
-        errors=errors,
-    )
+        valid=not errors, transform=transform.value, original_hash=original_hash,
+        transformed_hash=transformed_hash, content_intact=content_intact,
+        retention_floor_met=retention_floor_met, verified_at=time.time(), errors=errors)

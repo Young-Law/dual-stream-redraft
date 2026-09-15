@@ -262,3 +262,7 @@ Run local Phase 1 conformance with:
 python -m dualstream.cli conformance v2.10
 python -m pytest tests/test_v210_conformance.py
 ```
+
+## v2.10.1 review corrections
+
+See [the review correction contract](docs/v2.10_review_corrections.md) for pre-control probability semantics and quantization loss, acyclic detached retention signing, fail-closed verification, storage proof requirements, and event-level sampling limits. These fixes strengthen the research implementation; model-detection efficacy, independent validator operation, cross-platform performance, and DSA-P attestation still require separate evidence.

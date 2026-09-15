@@ -560,8 +560,9 @@ def test_keyed_context_rejects_key_id_and_local_sequence_substitution():
 def test_keyed_context_rejects_fixed_adaptive_policy_substitution(adaptive, header_policy, header_max, metadata_policy):
     # Keep the rewritten fixed-policy case structurally decodable so the test
     # reaches authenticated policy validation rather than failing on payload size.
-    width = 3 if adaptive else 10
-    artifact = encode_compact_sequence(rows(32, width), wire_version=VERSION_V33, adaptive_k=adaptive, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=200000)
+    # A zero sampling rate keeps base-width evidence while the key still
+    # authenticates the fixed/adaptive policy declaration.
+    artifact = encode_compact_sequence(rows(32, 10), wire_version=VERSION_V33, adaptive_k=adaptive, audit_key=KEY, audit_key_id=3, stochastic_rate_ppm=0)
     changed = _rewrite_v33_public_context(artifact, header_updates={13: header_max, 14: header_policy}, metadata_updates={"adaptive_policy": metadata_policy})
     assert decode_compact_sequence(changed)["meta"]["adaptive_policy"] == metadata_policy
     with pytest.raises(ValueError, match="eligibility|commitment|policy"):

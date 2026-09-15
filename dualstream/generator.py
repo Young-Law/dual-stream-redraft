@@ -78,7 +78,7 @@ class DualStreamGenerator:
     Software-only inference wrapper that emits 1:1 Answer tokens and evidence frames.
 
     This is intentionally "close to the metal" (per-token generation loop) so that we can capture
-    pre-sampling top-K logits as required by the DSA contract.
+    pre-control top-K softmax probabilities (not reconstructable raw logits).
     """
 
     def __init__(
@@ -457,6 +457,8 @@ class DualStreamGenerator:
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
             "model": self.model_name,
             "config": cfg,
+            "score_representation": "pre-control-softmax-probability",
+            "topk_renormalized": False,
             "audit_metadata": {
                 "randomized_audit": cfg.randomized_audit,
                 "audit_nonce_hash": frames[-1].audit_nonce_hash if frames else None,

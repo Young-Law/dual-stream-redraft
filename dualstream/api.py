@@ -6,6 +6,8 @@ verifier, tension map) alongside the original generation/ARC/script job APIs.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import time
 from dataclasses import asdict
@@ -438,15 +440,26 @@ def trigger_signals() -> dict:
 
 @app.post("/v210/retention/pipeline")
 def retention_pipeline(payload: dict) -> dict:
-    """Run the full retention assurance pipeline."""
+    """Run the full retention assurance pipeline.
+
+    Compact evidence must be supplied as base64 in ``compact_evidence_b64``.
+    The legacy ``content`` text field remains available for non-retention callers,
+    but is rejected here because the retention pipeline binds the compact artifact.
+    """
     from .retention_manager import RetentionPipeline
     from .storage_validator import LocalFilesystemBackend
 
     artifact_id = payload.get("artifact_id", f"artifact-{int(time.time()*1000)}")
-    content = payload.get("content", "")
-    artifact_bytes = content.encode("utf-8") if content else b""
+    encoded = payload.get("compact_evidence_b64", "")
+    if encoded:
+        try:
+            artifact_bytes = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="compact_evidence_b64 must be valid base64") from exc
+    else:
+        raise HTTPException(status_code=400, detail="compact_evidence_b64 is required for the retention pipeline")
     if not artifact_bytes:
-        raise HTTPException(status_code=400, detail="content is required")
+        raise HTTPException(status_code=400, detail="compact_evidence_b64 decodes to an empty artifact")
 
     storage_dir = payload.get("storage_dir", "/tmp/dsa-retention-web")
     pipeline = RetentionPipeline(
@@ -482,6 +495,7 @@ def retention_challenge(payload: dict) -> dict:
 
     challenger_key = (payload.get("challenger_key") or "web-challenger-key").encode()
     responder_key = (payload.get("responder_key") or "web-responder-key").encode()
+    responder_id = payload.get("responder_id", "web-responder")
 
     challenge = issue_possession_challenge(
         artifact_id=artifact_id,
@@ -491,13 +505,15 @@ def retention_challenge(payload: dict) -> dict:
     response = respond_to_challenge(
         challenge=challenge,
         artifact_bytes=artifact_bytes,
-        responder_id=payload.get("responder_id", "web-responder"),
+        responder_id=responder_id,
         responder_key=responder_key,
     )
     verify_result = verify_possession_challenge(
         challenge=challenge,
         response=response,
         challenger_key=challenger_key,
+        responder_key=responder_key,
+        expected_responder_id=responder_id,
     )
 
     return {
@@ -584,7 +600,11 @@ def evidence_budget(payload: dict) -> dict:
 @app.post("/v210/verifier/verify")
 def verifier_verify(payload: dict) -> dict:
     """Run portable verification on compact evidence (simulated)."""
-    from .verifier import VerifierWorkCertificate, canonical_serialize_certificate
+    from .work_certificate import (
+        CERTIFICATE_VERSION,
+        VerifierWorkCertificate,
+        canonical_certificate_payload,
+    )
 
     # Build a simulated work certificate for demo
     token_count = int(payload.get("token_count", 100))
@@ -595,6 +615,9 @@ def verifier_verify(payload: dict) -> dict:
     total_bytes = token_count * bytes_per_token
 
     cert = VerifierWorkCertificate(
+        certificate_version=CERTIFICATE_VERSION,
+        work_profile_id="portable-work-v1",
+        artifact_sha256=hashlib.sha256(str(total_bytes).encode()).hexdigest(),
         bytes_read=total_bytes,
         bytes_hashed=total_bytes,
         token_records_decoded=token_count,
@@ -605,11 +628,10 @@ def verifier_verify(payload: dict) -> dict:
         span_overlay_operations=0,
         allocations=token_count * 3,
         maximum_live_bytes=total_bytes * 2,
-        full_artifact_materializations=1,
-        normalized_runtime_seconds=token_count / 1000.0,
+        full_artifact_materializations=0,
     )
 
-    cert_hash = hashlib.sha256(canonical_serialize_certificate(cert)).hexdigest()
+    cert_hash = hashlib.sha256(canonical_certificate_payload(cert)).hexdigest()
 
     return {
         "profile": profile,
@@ -623,7 +645,6 @@ def verifier_verify(payload: dict) -> dict:
             "chunks_verified": cert.chunks_verified,
             "allocations": cert.allocations,
             "maximum_live_bytes": cert.maximum_live_bytes,
-            "normalized_runtime_seconds": cert.normalized_runtime_seconds,
             "certificate_hash": cert_hash[:32],
         },
     }

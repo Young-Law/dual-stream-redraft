@@ -309,7 +309,8 @@ def cmd_retention_issue(args: argparse.Namespace) -> int:
         return 1
 
     artifact_bytes = artifact_path.read_bytes()
-    artifact_id = hashlib.sha256(artifact_bytes).hexdigest()
+    artifact_content_hash = hashlib.sha256(artifact_bytes).digest()
+    artifact_id = artifact_content_hash.hex()
 
     issuer_key = args.issuer_key.encode("utf-8")
     req = issue_retention_requirement(
@@ -319,10 +320,12 @@ def cmd_retention_issue(args: argparse.Namespace) -> int:
         issuer_key=issuer_key,
         min_retention_days=args.min_retention_days,
         max_artifact_bytes=args.max_artifact_bytes,
+        artifact_content_hash=artifact_content_hash,
     )
 
     output = {
         "artifact_id": artifact_id,
+        "artifact_content_hash": req.artifact_content_hash.hex(),
         "profile_name": req.profile_name,
         "issuer_id": req.issuer_id,
         "min_retention_days": req.min_retention_days,
@@ -361,6 +364,7 @@ def cmd_retention_verify_chain(args: argparse.Namespace) -> int:
         expires_at=req_data.get("expires_at"),
         nonce=req_data.get("nonce", ""),
         signature=bytes.fromhex(req_data.get("signature", "")),
+        artifact_content_hash=bytes.fromhex(req_data.get("artifact_content_hash", "")),
     )
 
     # Load receipt JSON
@@ -378,6 +382,9 @@ def cmd_retention_verify_chain(args: argparse.Namespace) -> int:
         validator_id=rcpt_data.get("validator_id", ""),
         nonce=rcpt_data.get("nonce", ""),
         signature=bytes.fromhex(rcpt_data.get("signature", "")),
+        artifact_id=rcpt_data.get("artifact_id", ""),
+        retain_until=rcpt_data.get("retain_until", 0.0),
+        assurance_scope=rcpt_data.get("assurance_scope", "local_research_validation"),
     )
 
     # Load artifact
@@ -445,6 +452,8 @@ def cmd_retention_challenge(args: argparse.Namespace) -> int:
         challenge=challenge,
         response=response,
         challenger_key=challenger_key,
+        responder_key=responder_key,
+        expected_responder_id=args.responder_id,
     )
 
     if args.json:
@@ -498,6 +507,7 @@ def cmd_conformance(args: argparse.Namespace) -> int:
         ids = list(range(i * 16, i * 16 + 10))
         chosen = ids[6] if i % 17 == 0 else ids[0]
         tokens.append({
+            "token_index": i,
             "chosen_id": chosen,
             "topk_ids": ids,
             "topk_scores": [1.0 - (j / 20) for j in range(10)],
