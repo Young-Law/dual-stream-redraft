@@ -86,9 +86,10 @@ def test_signature_binds_artifact_and_ignores_runtime_observations(tmp_path):
                                       enforce_budget=False, verifier_key=KEY)
     cert = report.work_certificate
     assert cert.work_completed
-    changed_host = replace(cert, maximum_live_bytes=999999999,
-                            normalized_runtime_seconds=9999)
-    assert verify_work_certificate_signature(changed_host, cert.signature, KEY)
+    changed_host = replace(report, runtime_diagnostics=replace(
+        report.runtime_diagnostics, elapsed_seconds=9999, peak_tracemalloc_bytes=999999999))
+    assert verify_work_certificate_signature(changed_host.work_certificate, cert.signature, KEY)
     for changed in (replace(cert, artifact_sha256='0' * 64),
-                    replace(cert, work_completed=False)):
+                    replace(cert, work_completed=False),
+                    replace(cert, maximum_live_bytes=999999999)):
         assert not verify_work_certificate_signature(changed, cert.signature, KEY)

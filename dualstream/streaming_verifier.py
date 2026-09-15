@@ -29,7 +29,8 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
                     candidate_entries_decoded=0, varint_bytes_decoded=0,
                     chunks_verified=0, span_events_indexed=0,
                     span_overlay_operations=0, full_artifact_materializations=0,
-                    replay_passes=0, maximum_chunk_payload_bytes=0)
+                    replay_passes=0, maximum_chunk_payload_bytes=0,
+                    allocations=0, maximum_live_bytes=0)
     if work_bounds is None:
         work_bounds = {}
     work_bounds.update(max_artifact_bytes=max_artifact_bytes,
@@ -49,6 +50,8 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
                 raise ValueError('invalid streaming read size')
             b = fh.read(n)
             counters['bytes_read'] += len(b)
+            counters['allocations'] += 1
+            counters['maximum_live_bytes'] = max(counters['maximum_live_bytes'], len(b))
             if len(b) != n:
                 raise ValueError('artifact is truncated')
             if primary:
@@ -94,6 +97,13 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
         metadata = json.loads(meta_bytes.decode('utf8')) if meta_bytes else {}
         if not isinstance(metadata, dict) or metadata.get('profile_id') != profile:
             raise ValueError('V3.3 metadata profile declaration mismatch')
+        # Conservative logical wire residency, independent of Python object sizes.
+        # Metadata/header/manifest, two chunk buffers (read transition), and the
+        # logarithmic Merkle frontier plus temporary digests are covered.
+        fixed_wire_bytes = (len(raw_header) + len(meta_bytes) + 32
+                            + 2 * ce._MANIFEST_V33.size + 2 * ce._CHUNK_V33.size
+                            + 32 * (chunk_count.bit_length() + 4))
+        counters['maximum_live_bytes'] = max(counters['maximum_live_bytes'], fixed_wire_bytes)
         token_start = fh.tell()
         merkle = []
         def add_leaf(h):
@@ -143,6 +153,7 @@ def verify_stream(path, audit_keys=None, *, tension_maps=None,
                     raise ValueError('V3.3 chunk payload exceeds bounded canonical size')
                 payload = read(length, primary=primary)
                 counters['maximum_chunk_payload_bytes'] = max(counters['maximum_chunk_payload_bytes'], length)
+                counters['maximum_live_bytes'] = max(counters['maximum_live_bytes'], fixed_wire_bytes + 2 * length)
                 actual_sha = digest(payload)
                 if binascii.crc32(payload) & 0xffffffff != crc or actual_sha != sha:
                     raise ValueError('compact chunk integrity check failed')

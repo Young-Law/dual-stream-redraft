@@ -1,6 +1,6 @@
 # DSA v2.10 Phase 1 scope
 
-The repository implements the compact binary V3.3 evidence wire foundation, integrated model-generation path, legacy decoding compatibility, canonical artifact hashing, and authorized keyed-selection replay. Portable verifier governance, signed tension-map governance, and complete end-to-end retention assurance remain under implementation.
+The repository implements the compact binary V3.3 evidence wire foundation, integrated model-generation path, legacy decoding compatibility, canonical artifact hashing, and authorized keyed-selection replay. The bounded verifier and canonical work-envelope integration are implemented. Signed tension-map governance and complete end-to-end retention assurance remain under implementation.
 
 V3.1 and V3.2 artifacts remain legacy artifacts and are decoded by their version-specific binary decoders. They are not silently upgraded or reinterpreted as V3.3. DSA-P claims require external device-bound evidence and independent authorized retention receipts.
 
@@ -18,8 +18,11 @@ checked against the declared token count and maximum candidate width before read
 Work certificates report parser reads, direct SHA-256 input bytes, completed
 record/candidate decodes, checked chunks and spans, and full materializations.
 Replay work is included. SHA-256 input accounting excludes HMAC internals,
-calibration, and adjacent run metadata. Allocation counts are unavailable (`null`);
-traced peak bytes remain a Python runtime observation. Failed checks preserve
+calibration, and adjacent run metadata. `allocations` counts explicit artifact read-buffer events, including the dispatch
+read; it does not measure Python allocator calls. `maximum_live_bytes` is a
+conservative bound on retained wire buffers and the logarithmic Merkle frontier,
+not decoded object memory. Actual allocation counts remain unmeasured; traced
+peak bytes remain a Python runtime observation. Failed checks preserve
 completed operation counters with `work_completed=false`; these are lower bounds
 on interrupted work, not a certificate of successful verification. Signatures
 cover this completion flag and the declared work bounds.
@@ -33,9 +36,12 @@ Legacy V3.1/V3.2 checks retain materialized compatibility behavior and explicitl
 report that distinction. Semantic audit and independent retention attestation
 remain outside the local verifier's success claim.
 
-The verifier's compatibility report keeps runtime observations for callers, but
-its signed payload excludes traced peak and runtime fields and binds the verified
-artifact's final SHA-256. Its `v33_streaming_work` report is distinct from the
-standalone version-1 certificate in `dualstream.work_certificate`: registered
-work-envelope integration and cross-host conformance remain pending. Neither
-report authenticates a semantic audit result.
+The verifier emits the canonical version-2 `VerifierWorkCertificate` from
+`dualstream.work_certificate`, with the profile suffix `:streaming-v2`. Version 2
+adds signed completion status and parser bounds; version-1 canonical signing
+bytes remain supported without reinterpretation. `VerifierRuntimeDiagnostics`
+contains host measurements separately. The work envelope is enforced even when
+profile byte-budget checks are disabled. A golden-certificate CI job is configured
+for Linux, Windows, and macOS; completed runner results must be checked before
+claiming cross-host conformance. Neither certificate version authenticates a
+semantic audit result.

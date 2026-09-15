@@ -22,59 +22,21 @@ from .vocab import (
 )
 
 
-@dataclass(frozen=True)
-class VerifierWorkCertificate:
-    bytes_read: int
-    bytes_hashed: int | None
-    token_records_decoded: int
-    candidate_entries_decoded: int
-    varint_bytes_decoded: int
-    chunks_verified: int
-    span_events_indexed: int
-    span_overlay_operations: int
-    allocations: int | None
-    maximum_live_bytes: int
-    full_artifact_materializations: int
-    normalized_runtime_seconds: float | None = None
-    signature: str | None = None
-    certificate_kind: str = "legacy_observations"
-    work_completed: bool = True
-    artifact_sha256: str | None = None
-    work_bounds: dict[str, int] = field(default_factory=dict)
+from .work_certificate import (
+    CERTIFICATE_VERSION, VerifierWorkCertificate, VerifierRuntimeDiagnostics,
+    canonical_certificate_payload as canonical_serialize_certificate,
+    sign_work_certificate, validate_work_envelope, streaming_work_envelope,
+    verify_work_certificate_signature as _verify_work_certificate_signature,
+)
 
 
-def canonical_serialize_certificate(cert: VerifierWorkCertificate) -> bytes:
-    data = {
-        "bytes_read": cert.bytes_read,
-        "bytes_hashed": cert.bytes_hashed,
-        "token_records_decoded": cert.token_records_decoded,
-        "candidate_entries_decoded": cert.candidate_entries_decoded,
-        "varint_bytes_decoded": cert.varint_bytes_decoded,
-        "chunks_verified": cert.chunks_verified,
-        "span_events_indexed": cert.span_events_indexed,
-        "span_overlay_operations": cert.span_overlay_operations,
-        "allocations": cert.allocations,
-        "full_artifact_materializations": cert.full_artifact_materializations,
-        "certificate_kind": cert.certificate_kind,
-        "work_completed": cert.work_completed,
-        "artifact_sha256": cert.artifact_sha256,
-        "work_bounds": cert.work_bounds,
-    }
-    serialized = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    return serialized.encode("utf-8")
-
-
-def sign_work_certificate(cert: VerifierWorkCertificate, key: bytes) -> str:
-    import hmac
-    import hashlib
-    payload = canonical_serialize_certificate(cert)
-    return hmac.new(key, payload, hashlib.sha256).hexdigest()
-
-
-def verify_work_certificate_signature(cert: VerifierWorkCertificate, signature: str, key: bytes) -> bool:
-    import hmac
-    expected = sign_work_certificate(cert, key)
-    return hmac.compare_digest(expected, signature)
+def verify_work_certificate_signature(cert, signature_or_key, key=None):
+    """Accept both canonical and historical verifier signature call shapes."""
+    if key is None:
+        return _verify_work_certificate_signature(cert, signature_or_key)
+    if signature_or_key != cert.signature:
+        return False
+    return _verify_work_certificate_signature(cert, key)
 
 
 @dataclass(frozen=True)
@@ -243,6 +205,7 @@ class VerificationReport:
     minimum_budget_token_count: int = 0
     ceiling_bytes_per_token: int = 0
     work_certificate: VerifierWorkCertificate | None = None
+    runtime_diagnostics: VerifierRuntimeDiagnostics | None = None
     retention_state: str = "NOT_VERIFIED"
     retention_hash_valid: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -274,7 +237,7 @@ def find_compact_artifact(path: str | Path) -> Path:
     if p.is_dir():
         meta_path = p / "meta.json"
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta = _load_run_metadata(p)
             rel = meta.get("compact_evidence_path")
             if rel and (p / rel).exists(): return p / rel
         for name in ("compact_evidence.dsae", "compact_evidence.bin"):
@@ -394,6 +357,7 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
     summary = None
     portable = False
     retention_hash_valid = False
+    work_completed = False
     budget_status = "not_evaluated_disabled" if not enforce_budget else "not_evaluated_due_to_structural_failure"
     try:
         assert_profile_ci_mode(prof, ci_mode)
@@ -444,6 +408,7 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
                 raise ValueError("detached retention requirement floor mismatch")
             retention_hash_valid = True
             warnings.append("Retention content binding checked; signature and independent storage receipt are not verified by this local command.")
+        work_completed = not errors
     except (MemoryError, TimeoutError) as exc:
         errors.append(f"verification incomplete due to resource instability: {type(exc).__name__}")
         failure_codes.append(AST_INFRASTRUCTURE_INSTABILITY)
@@ -459,6 +424,8 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
     finally:
         if counters:
             counters["bytes_read"] += PREFIX.size  # version dispatch read, including failed verification
+            if counters.get("allocations") is not None:
+                counters["allocations"] += 1
         _, peak = tracemalloc.get_traced_memory()
         if owned_trace:
             tracemalloc.stop()
@@ -477,18 +444,29 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         names = ("bytes_read", "bytes_hashed", "token_records_decoded", "candidate_entries_decoded",
                  "varint_bytes_decoded", "chunks_verified", "span_events_indexed", "span_overlay_operations",
                  "allocations", "full_artifact_materializations")
+        envelope = streaming_work_envelope(prof)
         cert = VerifierWorkCertificate(**{name: counters.get(name) for name in names},
-            maximum_live_bytes=counters.get("maximum_live_bytes", peak),
-            certificate_kind="v33_streaming_work" if portable else "legacy_observations",
-            work_completed=decoded is not None,
+            certificate_version=CERTIFICATE_VERSION,
+            work_profile_id=envelope.work_profile_id if portable else "legacy-materializing-v1",
+            maximum_live_bytes=counters.get("maximum_live_bytes"),
+            work_completed=work_completed,
             artifact_sha256=decoded['sha256'] if decoded is not None else None,
             work_bounds=work_bounds)
+        if portable and decoded is not None:
+            violations = validate_work_envelope(
+                cert, envelope, artifact_size=decoded["raw_bytes"],
+                token_count=stats["token_count"], span_count=stats["span_count"])
+            if violations:
+                errors.extend(violations)
+                failure_codes.append(AST_DETERMINISTIC_VERIFIER_WORK_VIOLATION)
+                cert = replace(cert, work_completed=False)
         if verifier_key is not None:
             if not verifier_key:
+                cert = replace(cert, work_completed=False)
                 errors.append("work certificate signing key must not be empty")
                 failure_codes.append(AST_SCHEMA_MISMATCH)
             else:
-                cert = replace(cert, signature=sign_work_certificate(cert, verifier_key))
+                cert = sign_work_certificate(cert, verifier_key)
     ok = not errors
     outcome = "pass" if ok else "fail"
     if errors and failure_codes and all(code == AST_INFRASTRUCTURE_INSTABILITY for code in failure_codes):
@@ -511,6 +489,7 @@ def verify_evidence_artifact(path: str | Path, *, profile: str = "DSA-CI-Lite", 
         verification_outcome=outcome, failure_codes=sorted(set(failure_codes), key=str), errors=errors,
         strict_profile_budget=strict_profile_budget, minimum_budget_token_count=prof.minimum_budget_token_count,
         ceiling_bytes_per_token=prof.ceiling_bytes_per_token, work_certificate=cert,
+        runtime_diagnostics=VerifierRuntimeDiagnostics(elapsed, peak, rss),
         retention_state="LOCAL_PASS" if ok else "NOT_VERIFIED", retention_hash_valid=retention_hash_valid,
         warnings=warnings, calibration_seconds=calibration,
         normalized_runtime_ratio=elapsed / calibration if calibration else None,

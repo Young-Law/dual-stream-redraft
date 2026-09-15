@@ -88,3 +88,23 @@ def test_work_profile_mismatch_fails_closed():
     assert violations == [
         "certificate work profile other does not match envelope portable-work-v1"
     ]
+
+
+def test_v1_canonical_payload_remains_compatible():
+    import json
+    from dataclasses import asdict
+    cert = certificate(certificate_version=1)
+    original = asdict(cert)
+    for name in ("signature", "work_completed", "work_bounds"):
+        original.pop(name)
+    assert canonical_certificate_payload(cert) == json.dumps(
+        original, sort_keys=True, separators=(",", ":")).encode()
+
+
+def test_v2_signature_binds_completion_and_parser_bounds():
+    cert = sign_work_certificate(certificate(
+        work_completed=False, work_bounds={"max_chunk_tokens": 1024}), b"key")
+    assert verify_work_certificate_signature(cert, b"key")
+    assert not verify_work_certificate_signature(replace(cert, work_completed=True), b"key")
+    assert not verify_work_certificate_signature(replace(
+        cert, work_bounds={"max_chunk_tokens": 2048}), b"key")

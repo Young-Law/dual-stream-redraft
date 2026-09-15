@@ -584,7 +584,11 @@ def evidence_budget(payload: dict) -> dict:
 @app.post("/v210/verifier/verify")
 def verifier_verify(payload: dict) -> dict:
     """Run portable verification on compact evidence (simulated)."""
-    from .verifier import VerifierWorkCertificate, canonical_serialize_certificate
+    from .work_certificate import (
+        CERTIFICATE_VERSION,
+        VerifierWorkCertificate,
+        canonical_certificate_payload,
+    )
 
     # Build a simulated work certificate for demo
     token_count = int(payload.get("token_count", 100))
@@ -595,6 +599,9 @@ def verifier_verify(payload: dict) -> dict:
     total_bytes = token_count * bytes_per_token
 
     cert = VerifierWorkCertificate(
+        certificate_version=CERTIFICATE_VERSION,
+        work_profile_id="portable-work-v1",
+        artifact_sha256=hashlib.sha256(str(total_bytes).encode()).hexdigest(),
         bytes_read=total_bytes,
         bytes_hashed=total_bytes,
         token_records_decoded=token_count,
@@ -605,11 +612,10 @@ def verifier_verify(payload: dict) -> dict:
         span_overlay_operations=0,
         allocations=token_count * 3,
         maximum_live_bytes=total_bytes * 2,
-        full_artifact_materializations=1,
-        normalized_runtime_seconds=token_count / 1000.0,
+        full_artifact_materializations=0,
     )
 
-    cert_hash = hashlib.sha256(canonical_serialize_certificate(cert)).hexdigest()
+    cert_hash = hashlib.sha256(canonical_certificate_payload(cert)).hexdigest()
 
     return {
         "profile": profile,
@@ -623,7 +629,6 @@ def verifier_verify(payload: dict) -> dict:
             "chunks_verified": cert.chunks_verified,
             "allocations": cert.allocations,
             "maximum_live_bytes": cert.maximum_live_bytes,
-            "normalized_runtime_seconds": cert.normalized_runtime_seconds,
             "certificate_hash": cert_hash[:32],
         },
     }
