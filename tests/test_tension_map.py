@@ -1,7 +1,11 @@
 import time
 import hashlib
 import hmac
-from dualstream.tension_map import TensionMap, TensionRule
+
+import pytest
+import yaml
+
+from dualstream.tension_map import TensionMap, TensionRule, canonical_tension_map_payload
 
 
 def test_tension_map_parsing_without_signature():
@@ -33,12 +37,9 @@ def test_tension_rule_application():
         widening_action="widen",
         expiry=None,
     )
-    # Applies to matching context
     assert rule.applies_to({"benchmark_family_id": "arc-eval"}) is True
-    # Does not apply to mismatching context
     assert rule.applies_to({"benchmark_family_id": "other-eval"}) is False
 
-    # Check ast_signal selector
     rule_ast = TensionRule(
         rule_id="r2",
         selector_type="ast_signal",
@@ -49,13 +50,12 @@ def test_tension_rule_application():
     assert rule_ast.applies_to({"ast_signals": [301, 303]}) is True
     assert rule_ast.applies_to({"ast_signals": [301, 302]}) is False
 
-    # Check expiry
     rule_expired = TensionRule(
         rule_id="r3",
         selector_type="always",
         selector_value="",
         widening_action="widen",
-        expiry=time.time() - 10,  # 10 seconds in the past
+        expiry=time.time() - 10,
     )
     assert rule_expired.applies_to({}) is False
 
@@ -64,7 +64,7 @@ def test_tension_rule_application():
         selector_type="always",
         selector_value="",
         widening_action="widen",
-        expiry=time.time() + 10,  # 10 seconds in the future
+        expiry=time.time() + 10,
     )
     assert rule_active.applies_to({}) is True
 
@@ -83,67 +83,83 @@ rules:
     assert tmap.evaluate_triggers({"benchmark_family_id": "other-eval"}) is False
 
 
+def _signed_map(key, signer_id="gov-authority", *, expiry=4102444800.0, widening_action="widen", extra=None):
+    data = {
+        "map_id": 200,
+        "rules": [{
+            "rule_id": "r1",
+            "selector_type": "benchmark_family_id",
+            "selector_value": "arc-eval",
+            "widening_action": widening_action,
+            "expiry": expiry,
+        }],
+    }
+    if extra:
+        data.update(extra)
+    signature_hash = hmac.new(
+        key, canonical_tension_map_payload(data), hashlib.sha256
+    ).hexdigest()
+    data["signature"] = {"signer_id": signer_id, "hash": signature_hash}
+    return yaml.safe_dump(data, sort_keys=False)
+
+
 def test_signed_tension_map_governance():
     key = b"tension-map-symmetric-signing-key"
     signer_id = "gov-authority"
-    map_id = 200
-    
-    # Payload reconstruction logic from TensionMap.parse_and_verify:
-    # f"{map_id}:" + ",".join(f"{r['rule_id']}={r['selector_type']}={r['selector_value']}" for r in rules)
-    payload = f"{map_id}:r1=benchmark_family_id=arc-eval"
-    signature_hash = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    yaml_content = _signed_map(key, signer_id)
 
-    yaml_content = f"""
-map_id: {map_id}
-rules:
-  - rule_id: "r1"
-    selector_type: "benchmark_family_id"
-    selector_value: "arc-eval"
-    widening_action: "widen"
-signature:
-  signer_id: "{signer_id}"
-  hash: "{signature_hash}"
-"""
-    # 1. Verification succeeds with valid key
     tmap = TensionMap.parse_and_verify(yaml_content, tension_keys={signer_id: key})
-    assert tmap.map_id == map_id
+    assert tmap.map_id == 200
 
-    # 2. Verification raises ValueError with unknown signer_id
-    try:
+    with pytest.raises(ValueError, match="unknown key"):
         TensionMap.parse_and_verify(yaml_content, tension_keys={"other-signer": key})
-        assert False, "Expected ValueError for unknown signer_id"
-    except ValueError as exc:
-        assert "unknown key" in str(exc)
 
-    # 3. Verification raises ValueError if signature block is missing but keys are expected
-    yaml_unsigned = f"""
-map_id: {map_id}
-rules:
-  - rule_id: "r1"
-    selector_type: "benchmark_family_id"
-    selector_value: "arc-eval"
-    widening_action: "widen"
-"""
-    try:
-        TensionMap.parse_and_verify(yaml_unsigned, tension_keys={signer_id: key})
-        assert False, "Expected ValueError for missing signature block"
-    except ValueError as exc:
-        assert "requires signature" in str(exc)
+    unsigned = yaml.safe_load(yaml_content)
+    unsigned.pop("signature")
+    with pytest.raises(ValueError, match="requires signature"):
+        TensionMap.parse_and_verify(
+            yaml.safe_dump(unsigned, sort_keys=False), tension_keys={signer_id: key}
+        )
 
-    # 4. Verification raises ValueError with tampered signature hash
-    yaml_tampered = f"""
-map_id: {map_id}
-rules:
-  - rule_id: "r1"
-    selector_type: "benchmark_family_id"
-    selector_value: "arc-eval"
-    widening_action: "widen"
-signature:
-  signer_id: "{signer_id}"
-  hash: "wronghashabcdef"
-"""
-    try:
-        TensionMap.parse_and_verify(yaml_tampered, tension_keys={signer_id: key})
-        assert False, "Expected ValueError for tampered signature"
-    except ValueError as exc:
-        assert "signature mismatch" in str(exc)
+    tampered = yaml.safe_load(yaml_content)
+    tampered["signature"]["hash"] = "wronghashabcdef"
+    with pytest.raises(ValueError, match="signature mismatch"):
+        TensionMap.parse_and_verify(
+            yaml.safe_dump(tampered, sort_keys=False), tension_keys={signer_id: key}
+        )
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda data: data["rules"][0].__setitem__("expiry", 7258118400.0),
+        lambda data: data["rules"][0].pop("expiry"),
+        lambda data: data["rules"][0].__setitem__("widening_action", "disabled"),
+        lambda data: data.__setitem__("future_policy_field", "changed"),
+    ],
+)
+def test_signed_tension_map_rejects_policy_field_tampering(mutator):
+    key = b"tension-map-symmetric-signing-key"
+    signer_id = "gov-authority"
+    data = yaml.safe_load(_signed_map(key, signer_id, extra={"future_policy_field": "original"}))
+    mutator(data)
+
+    with pytest.raises(ValueError, match="signature mismatch"):
+        TensionMap.parse_and_verify(
+            yaml.safe_dump(data, sort_keys=False), tension_keys={signer_id: key}
+        )
+
+
+def test_signed_tension_map_expiry_controls_behavior_only_when_authenticated():
+    key = b"tension-map-symmetric-signing-key"
+    signer_id = "gov-authority"
+    expired = _signed_map(key, signer_id, expiry=1.0)
+    tmap = TensionMap.parse_and_verify(expired, tension_keys={signer_id: key})
+    assert tmap.evaluate_triggers({"benchmark_family_id": "arc-eval"}) is False
+
+    data = yaml.safe_load(expired)
+    data["rules"][0]["expiry"] = 7258118400.0
+    with pytest.raises(ValueError, match="signature mismatch"):
+        TensionMap.parse_and_verify(
+            yaml.safe_dump(data, sort_keys=False), tension_keys={signer_id: key}
+        )
