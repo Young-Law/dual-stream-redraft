@@ -1,0 +1,30 @@
+name: H4 synthetic mechanism benchmark
+
+on:
+  push:
+    branches:
+      - experiment/h4-hybrid-widening
+  pull_request:
+    paths:
+      - 'dualstream/compact_evidence.py'
+      - 'experiments/h4_hybrid_widening.py'
+      - 'tests/test_h4_hybrid_widening.py'
+      - '.github/workflows/h4-benchmark.yml'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest tests/test_h4_hybrid_widening.py
+      - run: python experiments/h4_hybrid_widening.py --trials 100 --json-out results/h4_hybrid_widening.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h4-hybrid-widening-results
+          path: results/h4_hybrid_widening.json
+          if-no-files-found: error
