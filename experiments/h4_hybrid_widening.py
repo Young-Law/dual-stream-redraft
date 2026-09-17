@@ -83,11 +83,8 @@ def _trial(
     rank_only_widened = set(rank_triggered_tokens)
     hybrid_widened = set(rank_triggered_tokens)
 
-    for token_index in range(sequence_length):
-        # The v2.10.1 encoder samples only otherwise-untriggered tokens. Rank-triggered
-        # positions are already widened and therefore do not consume stochastic selections.
-        if token_index in rank_triggered_tokens:
-            continue
+    eligible = [index for index in range(sequence_length) if index not in rank_triggered_tokens]
+    for token_index in eligible:
         if keyed_sample_selected(
             audit_key,
             commit_identity=commit_identity,
@@ -105,10 +102,13 @@ def _trial(
         ):
             hybrid_widened.add(token_index)
 
-    # Sanity baseline: spend the same number of token-level widening decisions as the
-    # hybrid policy, but place them uniformly without rank information.
+    # Fair control: preserve the same rank-triggered widening, then spend exactly
+    # the same number of additional selections uniformly over the same eligible
+    # positions. This isolates keyed selection from rank-trigger information.
+    extra_budget = len(hybrid_widened - rank_triggered_tokens)
     baseline_rng = random.Random(seed + 123_456)
-    random_widened = set(baseline_rng.sample(range(sequence_length), len(hybrid_widened)))
+    random_extra = set(baseline_rng.sample(eligible, extra_budget)) if extra_budget else set()
+    rank_plus_uniform_widened = set(rank_triggered_tokens) | random_extra
 
     def metrics(widened: set[int]) -> dict[str, float]:
         event_hits = 0
@@ -123,14 +123,14 @@ def _trial(
 
     return {
         "rank_only": metrics(rank_only_widened),
-        "hybrid": metrics(hybrid_widened),
-        "budget_matched_random": metrics(random_widened),
+        "hybrid_keyed": metrics(hybrid_widened),
+        "rank_plus_uniform": metrics(rank_plus_uniform_widened),
     }
 
 
 def _aggregate(values: list[dict[str, dict[str, float]]]) -> dict[str, dict[str, float]]:
     output: dict[str, dict[str, float]] = {}
-    for policy in ("rank_only", "hybrid", "budget_matched_random"):
+    for policy in ("rank_only", "hybrid_keyed", "rank_plus_uniform"):
         events = [value[policy]["event_recall"] for value in values]
         tokens = [value[policy]["token_recall"] for value in values]
         widen = [value[policy]["widen_rate"] for value in values]
@@ -155,12 +155,16 @@ def run_benchmark(
     rate_ppm: int = DEFAULT_RATE_PPM,
 ) -> dict[str, object]:
     scenarios = {
+        # All planted spans stay inside the base-K concealment condition, so the
+        # rank-only policy never widens them. This isolates stochastic coverage.
         "top3_concealment": 0.0,
+        # One quarter of spans are rank-triggered. This checks that keyed sampling
+        # adds coverage without discarding deterministic rank-trigger information.
         "mixed_25pct_rank_triggered": 0.25,
     }
     results: dict[str, object] = {
         "benchmark_id": BENCHMARK_ID,
-        "implementation_target": "v2.10.1 selection primitive",
+        "implementation_target": "v2.10.1 keyed selection primitive",
         "trials": trials,
         "sequence_length": sequence_length,
         "events_per_trial": event_count,
@@ -169,7 +173,12 @@ def run_benchmark(
         "max_k": MAX_K,
         "interpretation": (
             "Synthetic mechanism validation only. Event detection means at least one token in a planted "
-            "concealment span was widened. It does not measure deceptive-alignment detection."
+            "concealment span was widened. The benchmark does not measure deceptive-alignment detection, "
+            "semantic validity of logits, or monitor-aware model adaptation."
+        ),
+        "control": (
+            "rank_plus_uniform preserves every rank-triggered position and uses exactly the same extra widening "
+            "budget as hybrid_keyed, sampled uniformly from the same otherwise-untriggered positions."
         ),
         "scenarios": {},
     }
@@ -199,15 +208,18 @@ def _print_summary(report: dict[str, object]) -> None:
     assert isinstance(scenarios, dict)
     for scenario, lengths in scenarios.items():
         print(f"\n{scenario}")
-        print("length  rank-only  hybrid  random  hybrid-widen-rate")
+        print("length  rank-only  hybrid-keyed  rank+uniform  hybrid-widen-rate")
         assert isinstance(lengths, dict)
         for length, policies in lengths.items():
             assert isinstance(policies, dict)
             rank = policies["rank_only"]["event_recall_mean"]
-            hybrid = policies["hybrid"]["event_recall_mean"]
-            random_value = policies["budget_matched_random"]["event_recall_mean"]
-            widen = policies["hybrid"]["widen_rate_mean"]
-            print(f"{int(length):>6}  {rank:>9.3f}  {hybrid:>6.3f}  {random_value:>6.3f}  {widen:>17.4f}")
+            hybrid = policies["hybrid_keyed"]["event_recall_mean"]
+            random_value = policies["rank_plus_uniform"]["event_recall_mean"]
+            widen = policies["hybrid_keyed"]["widen_rate_mean"]
+            print(
+                f"{int(length):>6}  {rank:>9.3f}  {hybrid:>12.3f}  "
+                f"{random_value:>12.3f}  {widen:>17.4f}"
+            )
 
 
 def main() -> int:
@@ -215,6 +227,8 @@ def main() -> int:
     parser.add_argument("--trials", type=int, default=DEFAULT_TRIALS)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
+    if args.trials < 1:
+        raise SystemExit("--trials must be positive")
     report = run_benchmark(trials=args.trials)
     _print_summary(report)
     if args.json_out:
