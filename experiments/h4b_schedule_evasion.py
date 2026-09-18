@@ -155,16 +155,34 @@ def run(*, keys: int = 20, scenarios_per_key: int = 20, rate_ppm: int = RATE_PPM
     results = out["results"]
     assert isinstance(results, dict)
     for length in EVENT_LENGTHS:
-        rows = [
-            _one(key_id=k, scenario_id=k*scenarios_per_key+s+1, length=length, rate_ppm=rate_ppm)
-            for k in range(keys) for s in range(scenarios_per_key)
+        rows_by_key = [
+            [
+                _one(
+                    key_id=k,
+                    scenario_id=k * scenarios_per_key + s + 1,
+                    length=length,
+                    rate_ppm=rate_ppm,
+                )
+                for s in range(scenarios_per_key)
+            ]
+            for k in range(keys)
         ]
+        rows = [row for key_rows in rows_by_key for row in key_rows]
         expected = analytical_touch_probability(length, rate_ppm)
+        protected_key_means = [
+            statistics.mean(r["schedule_aware_protected_recall"] for r in key_rows)
+            for key_rows in rows_by_key
+        ]
         results[str(length)] = {
             "analytical_touch_probability": expected,
             "key_blind_protected": _summary([r["key_blind_protected_recall"] for r in rows]),
             "schedule_aware_public": _summary([r["schedule_aware_public_recall"] for r in rows]),
             "schedule_aware_protected": _summary([r["schedule_aware_protected_recall"] for r in rows]),
+            "schedule_aware_protected_between_key_sd": (
+                statistics.stdev(protected_key_means) if len(protected_key_means) > 1 else 0.0
+            ),
+            "schedule_aware_protected_key_mean_min": min(protected_key_means),
+            "schedule_aware_protected_key_mean_max": max(protected_key_means),
             "protected_minus_analytical": statistics.mean(
                 r["schedule_aware_protected_recall"] - expected for r in rows
             ),
