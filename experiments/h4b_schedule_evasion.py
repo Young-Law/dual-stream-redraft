@@ -58,41 +58,43 @@ def _schedule(*, key: bytes, key_id: int, scenario_id: int, length: int, rate_pp
     }
 
 
-def _candidate_starts(length: int) -> list[int]:
-    return list(range(0, SEQUENCE_LENGTH - length + 1))
-
-
 def _choose_events(length: int, scenario_id: int, avoid: set[int] | None) -> list[int]:
+    """Place exactly one event in each fixed bucket.
+
+    Fixed buckets guarantee EVENT_COUNT non-overlapping spans for every configured
+    event length, including the boundary case length=500 in a 10,000-token
+    sequence. A schedule-aware attacker chooses, within each bucket, the span
+    with the fewest predictable sampled positions; key-blind placement chooses a
+    deterministic pseudorandom span. This avoids greedy-packing artifacts.
+    """
+    bucket = SEQUENCE_LENGTH // EVENT_COUNT
+    if length < 1 or length > bucket:
+        raise ValueError("event length must fit inside one placement bucket")
+
     rng = random.Random(10_000_000 + scenario_id * 1009 + length)
-    candidates = _candidate_starts(length)
-    rng.shuffle(candidates)
     chosen: list[int] = []
-    for start in candidates:
-        span = range(start, start + length)
-        if avoid is not None and any(i in avoid for i in span):
-            continue
-        if any(not (start + length <= other or other + length <= start) for other in chosen):
-            continue
+    avoid_set = avoid or set()
+
+    for bucket_index in range(EVENT_COUNT):
+        lo = bucket_index * bucket
+        hi = lo + bucket - length
+        candidates = list(range(lo, hi + 1))
+
+        if avoid is None:
+            start = candidates[rng.randrange(len(candidates))]
+        else:
+            start = min(
+                candidates,
+                key=lambda s: (
+                    sum(i in avoid_set for i in range(s, s + length)),
+                    hashlib.sha256(
+                        f"{scenario_id}:{length}:{bucket_index}:{s}".encode()
+                    ).digest(),
+                ),
+            )
         chosen.append(start)
-        if len(chosen) == EVENT_COUNT:
-            return chosen
-    # If perfect avoidance cannot fit the requested budget, choose the remaining
-    # non-overlapping spans with minimum predictable exposure. This makes the
-    # attacker deterministic and explicit rather than silently dropping events.
-    scored = sorted(
-        candidates,
-        key=lambda s: (
-            sum(i in (avoid or set()) for i in range(s, s + length)),
-            hashlib.sha256(f"{scenario_id}:{length}:{s}".encode()).digest(),
-        ),
-    )
-    for start in scored:
-        if any(not (start + length <= other or other + length <= start) for other in chosen):
-            continue
-        chosen.append(start)
-        if len(chosen) == EVENT_COUNT:
-            return chosen
-    raise RuntimeError("unable to place non-overlapping events")
+
+    return chosen
 
 
 def _recall(starts: list[int], length: int, widened: set[int]) -> float:
