@@ -1,0 +1,30 @@
+name: H4-B schedule-aware evasion benchmark
+
+on:
+  push:
+    branches:
+      - experiment/h4b-schedule-evasion
+  pull_request:
+    paths:
+      - 'dualstream/compact_evidence.py'
+      - 'experiments/h4b_schedule_evasion.py'
+      - 'tests/test_h4b_schedule_evasion.py'
+      - '.github/workflows/h4b-benchmark.yml'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest tests/test_h4b_schedule_evasion.py
+      - run: python experiments/h4b_schedule_evasion.py --keys 100 --scenarios-per-key 100 --json-out results/h4b_schedule_evasion.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h4b-schedule-evasion-results
+          path: results/h4b_schedule_evasion.json
+          if-no-files-found: error
