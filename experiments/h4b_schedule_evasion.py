@@ -35,7 +35,7 @@ def _commit(scenario_id: int, length: int) -> str:
     return hashlib.sha256(f"h4b:{scenario_id}:{length}:{SEQUENCE_LENGTH}".encode()).hexdigest()
 
 
-def _schedule(*, key: bytes, key_id: int, scenario_id: int, length: int, rate_ppm: int) -> set[int]:
+def _schedule(*, key: bytes, audit_key_id: int, scenario_id: int, length: int, rate_ppm: int) -> set[int]:
     commit = _commit(scenario_id, length)
     return {
         token_index
@@ -48,7 +48,7 @@ def _schedule(*, key: bytes, key_id: int, scenario_id: int, length: int, rate_pp
             policy_version=POLICY_VERSION,
             rate_ppm=rate_ppm,
             benchmark_id=BENCHMARK_ID,
-            audit_key_id=key_id,
+            audit_key_id=audit_key_id,
             profile_id=PROFILE_ID,
             base_k=BASE_K,
             max_adaptive_k=MAX_K,
@@ -104,11 +104,21 @@ def _recall(starts: list[int], length: int, widened: set[int]) -> float:
 def _one(*, key_id: int, scenario_id: int, length: int, rate_ppm: int) -> dict[str, float]:
     public_key = _key(0)
     protected_key = _key(key_id + 1)
+    # Hold every public replay-context field constant across the paired schedules.
+    # The only schedule input that differs is the secret key material itself.
     public_schedule = _schedule(
-        key=public_key, key_id=0, scenario_id=scenario_id, length=length, rate_ppm=rate_ppm
+        key=public_key,
+        audit_key_id=AUDIT_KEY_ID,
+        scenario_id=scenario_id,
+        length=length,
+        rate_ppm=rate_ppm,
     )
     protected_schedule = _schedule(
-        key=protected_key, key_id=key_id + 1, scenario_id=scenario_id, length=length, rate_ppm=rate_ppm
+        key=protected_key,
+        audit_key_id=AUDIT_KEY_ID,
+        scenario_id=scenario_id,
+        length=length,
+        rate_ppm=rate_ppm,
     )
 
     key_blind = _choose_events(length, scenario_id, avoid=None)
@@ -149,6 +159,11 @@ def run(*, keys: int = 20, scenarios_per_key: int = 20, rate_ppm: int = RATE_PPM
             "runs_per_length": keys * scenarios_per_key,
             "sequence_length": SEQUENCE_LENGTH, "events_per_run": EVENT_COUNT,
             "rate_ppm": rate_ppm, "event_lengths": EVENT_LENGTHS,
+            "audit_key_id": AUDIT_KEY_ID,
+            "replay_context_control": (
+                "Public and protected schedules use identical public replay-context fields; "
+                "only the secret key material differs."
+            ),
         },
         "results": {},
     }
