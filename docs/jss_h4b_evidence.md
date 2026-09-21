@@ -2,15 +2,16 @@
 
 ## Status
 
-H4-B is complete and CI-validated on PR #40.
+H4-B is complete and revalidated on PR #41 after correcting the paired replay-context control.
 
-- Validated head: `388882200b551746895f06ce4a186f86879235f6`
-- Merge commit on `main`: `7fe9bf9dad02c854e1ecd2edc8e2f1e0f4c27e62`
-- Repository CI: success
-- H4-B workflow: success
-- Regression tests: 3 passed
+- Corrected validated head: `ea35fd4f04c762935366b815f21930d6e20a91ff`
+- Repository CI run #111: success
+- H4-B workflow run #8: success
+- Regression tests include an explicit paired replay-context invariant
 - Benchmark design: 100 independently derived audit keys x 100 scenarios per key = 10,000 runs per event length
-- Uploaded result artifact SHA-256: `784dec09740bf19eba36111fcfe5b7efb993ea32d9a8b24cca8280bfe09af658`
+- Result JSON SHA-256: `b419fc2c833b407bdbe59f3780bcb89f364244e0903cd2045a6ee7206adbbc61`
+- GitHub Actions artifact digest (ZIP): `sha256:792670e21d25e970ba8f5345e0f4cf03a194096170bc8772001e83abb3be2f30`
+- Replay-context control: both schedules use `audit_key_id=7`; only secret key material differs.
 
 ## Preregistered question
 
@@ -20,13 +21,13 @@ Can an attacker that knows a predictable public sampling schedule place concealm
 
 | Event length | Analytical touch probability | Protected keyed exposure | Predictable public exposure |
 | ---: | ---: | ---: | ---: |
-| 1 | 0.00500 | 0.00494 | 0.00000 |
-| 10 | 0.04889 | 0.04918 | 0.00000 |
-| 50 | 0.22169 | 0.22256 | 0.00000 |
-| 100 | 0.39423 | 0.39312 | 0.00051 |
-| 500 | 0.91843 | 0.91880 | 0.91895 |
+| 1 | 0.00500 | 0.00517 | 0.00000 |
+| 10 | 0.04889 | 0.04981 | 0.00000 |
+| 50 | 0.22169 | 0.22336 | 0.00000 |
+| 100 | 0.39423 | 0.39370 | 0.00056 |
+| 500 | 0.91843 | 0.91905 | 0.91829 |
 
-The public schedule is highly exploitable when the attacker has positional freedom. The same placement strategy does not transfer to the protected keyed schedule: protected exposure remains near the key-blind analytical expectation.
+The public schedule is highly exploitable when the attacker has positional freedom. After holding the public replay context constant across the paired schedules, the same placement strategy does not transfer to the protected keyed schedule: protected exposure remains near the key-blind analytical expectation.
 
 ## Boundary condition
 
