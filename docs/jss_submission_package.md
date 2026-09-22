@@ -22,7 +22,7 @@ Do not state or imply that H4-B establishes:
 2. Separate implemented controls from roadmap items.
 3. Report the H4-B result and scope boundary in the abstract.
 4. Keep the 500-token no-placement-freedom boundary explicit in Results and Limitations.
-5. Preserve corrected workflow run #8, head `ea35fd4f04c762935366b815f21930d6e20a91ff`, result JSON SHA-256 `b419fc2c833b407bdbe59f3780bcb89f364244e0903cd2045a6ee7206adbbc61`, and the GitHub Actions artifact digest in a reproducibility subsection.
+5. Preserve corrected workflow run #9, head `620101bb7c91b8447956d0a77ce9e4d8fb584499`, result JSON SHA-256 `b419fc2c833b407bdbe59f3780bcb89f364244e0903cd2045a6ee7206adbbc61`, and the GitHub Actions artifact digest in a reproducibility subsection.
 6. Leave model-in-the-loop adaptive evasion as future work until it has its own preregistered experiment.
 
 ## Cover-letter emphasis
