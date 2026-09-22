@@ -4,13 +4,13 @@
 
 H4-B is complete and revalidated on PR #41 after correcting the paired replay-context control.
 
-- Corrected validated head: `ea35fd4f04c762935366b815f21930d6e20a91ff`
-- Repository CI run #111: success
-- H4-B workflow run #8: success
+- Corrected validated head: `620101bb7c91b8447956d0a77ce9e4d8fb584499`
+- Repository CI run #114: success
+- H4-B workflow run #9: success
 - Regression tests include an explicit paired replay-context invariant
 - Benchmark design: 100 independently derived audit keys x 100 scenarios per key = 10,000 runs per event length
 - Result JSON SHA-256: `b419fc2c833b407bdbe59f3780bcb89f364244e0903cd2045a6ee7206adbbc61`
-- GitHub Actions artifact digest (ZIP): `sha256:792670e21d25e970ba8f5345e0f4cf03a194096170bc8772001e83abb3be2f30`
+- GitHub Actions artifact digest (ZIP): `sha256:75573fc39b40c9168b8882261b117a7ec4f9a69f1811d7d670cc1d37b80bb3e8`
 - Replay-context control: both schedules use `audit_key_id=7`; only secret key material differs.
 
 ## Preregistered question
