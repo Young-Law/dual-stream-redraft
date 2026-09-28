@@ -102,6 +102,8 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
             "temperature": cfg.temperature,
             "top_p": cfg.top_p,
             "do_sample": cfg.do_sample,
+            "repetition_penalty": getattr(cfg, "repetition_penalty", 1.0),
+            "no_repeat_ngram_size": getattr(cfg, "no_repeat_ngram_size", 0),
             "include_attn": cfg.include_attn,
             "include_probes": cfg.include_probes,
             "probe_pack_path": cfg.probe_pack_path,
@@ -129,12 +131,16 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
         meta["compact_evidence_path"] = compact_path.name
         meta["compact_evidence_sha256"] = hashlib.sha256(compact_bytes).hexdigest()
         meta["compact_evidence_token_count"] = frame_token_count
+    else:
+        compact_path.unlink(missing_ok=True)
     if result.get("fallback_text"):
         fallback_path = outdir / "fallback.txt"
         fallback_path.write_text(result["fallback_text"], encoding="utf-8")
         meta["fallback_path"] = fallback_path.name
         meta["fallback_evidence_bound"] = False
         meta["original_output_blocked"] = True
+    else:
+        (outdir / "fallback.txt").unlink(missing_ok=True)
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     try:
@@ -171,6 +177,8 @@ def cmd_generate(args: argparse.Namespace) -> int:
         top_p=args.top_p,
         do_sample=not args.greedy,
         seed=args.seed,
+        repetition_penalty=getattr(args, "repetition_penalty", 1.0),
+        no_repeat_ngram_size=getattr(args, "no_repeat_ngram_size", 0),
         include_attn=args.include_attn,
         include_probes=args.include_probes,
         probe_pack_path=args.probe_pack,
@@ -567,6 +575,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--top-p", type=float, default=1.0)
     g.add_argument("--greedy", action="store_true", help="Disable sampling (argmax)")
     g.add_argument("--seed", type=int, default=None)
+    g.add_argument("--repetition-penalty", type=float, default=1.0, help="Penalize previously seen tokens; 1.0 disables")
+    g.add_argument("--no-repeat-ngram-size", type=int, default=0, help="Block repeated n-grams; 0 disables")
 
     g.add_argument("--include-attn", action="store_true", help="Emit attention summaries (slow)")
     g.add_argument("--include-probes", action="store_true", help="Run concept probes (requires hidden states; slow)")

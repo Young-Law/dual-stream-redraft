@@ -39,6 +39,23 @@ class _FakeFinding:
         self.label = label
 
 
+def test_reused_output_directory_removes_stale_optional_artifacts(tmp_path, monkeypatch):
+    from dualstream.generator import GenerationConfig
+
+    (tmp_path / "compact_evidence.dsae").write_bytes(b"old evidence")
+    (tmp_path / "fallback.txt").write_text("old refusal")
+    (tmp_path / "notes.txt").write_text("keep this")
+    monkeypatch.setattr(cli, "render_monologue_text", lambda *a, **kw: "evidence")
+    monkeypatch.setattr(cli, "coherence_audit", lambda *a, **kw: [])
+    cli._run_generation(_FakeGenerator(), GenerationConfig(), "new prompt", tmp_path)
+    assert not (tmp_path / "compact_evidence.dsae").exists()
+    assert not (tmp_path / "fallback.txt").exists()
+    assert (tmp_path / "notes.txt").read_text() == "keep this"
+    meta = json.loads((tmp_path / "meta.json").read_text())
+    assert "compact_evidence_path" not in meta
+    assert "fallback_path" not in meta
+
+
 def test_generate_requires_exactly_one_prompt_source():
     parser = cli.build_parser()
 

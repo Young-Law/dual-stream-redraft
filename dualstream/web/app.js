@@ -313,6 +313,11 @@ function payloadFromForm() {
         prompt: String(fd.get('prompt') || '').trim(),
         model: String(fd.get('model') || 'gpt2').trim(),
         max_new_tokens: Number(fd.get('max_new_tokens') || 128),
+        repetition_penalty: Number(fd.get('repetition_penalty') || 1),
+        no_repeat_ngram_size: Number(fd.get('no_repeat_ngram_size') || 0),
+        compact_evidence: fd.get('compact_evidence') === 'on',
+        adaptive_k: fd.get('adaptive_k') === 'on',
+        evidence_profile: String(fd.get('evidence_profile') || 'DSA-CI-Lite'),
         offline: true,
       },
     };
