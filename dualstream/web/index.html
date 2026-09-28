@@ -39,6 +39,19 @@
             <input id="model" name="model" value="gpt2" />
             <label for="max_new_tokens">Max new tokens</label>
             <input id="max_new_tokens" name="max_new_tokens" type="number" value="128" min="1" />
+            <label for="repetition_penalty">Repetition penalty (1 disables)</label>
+            <input id="repetition_penalty" name="repetition_penalty" type="number" value="1" min="0.01" step="0.05" />
+            <label for="no_repeat_ngram_size">Block repeated n-grams (0 disables)</label>
+            <input id="no_repeat_ngram_size" name="no_repeat_ngram_size" type="number" value="0" min="0" step="1" />
+            <label><input name="compact_evidence" type="checkbox" /> Write compact evidence</label>
+            <label><input name="adaptive_k" type="checkbox" /> Adaptive evidence width</label>
+            <label for="evidence_profile">Evidence profile</label>
+            <select id="evidence_profile" name="evidence_profile">
+              <option value="DSA-CI-Lite">CI-Lite</option>
+              <option value="DSA-CI-Standard">CI-Standard</option>
+              <option value="DSA-Deep">Deep</option>
+              <option value="DSA-Forensic">Forensic</option>
+            </select>
             <p class="subtle">Offline mode is forced ON for this tab.</p>
           </fieldset>
 

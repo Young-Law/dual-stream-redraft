@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Any, Callable
@@ -63,6 +64,9 @@ class DualStreamService:
         def wrapped() -> None:
             self._update(job.id, status="running", started_at=_utcnow(), progress=0.01, message="Starting")
             try:
+                if cancel_flag.is_set():
+                    self._update(job.id, status="cancelled", message="Cancelled")
+                    return
                 result = runner(job, cancel_flag)
                 if cancel_flag.is_set() and job.status != "completed":
                     self._update(job.id, status="cancelled", message="Cancelled")
@@ -103,7 +107,7 @@ class DualStreamService:
         with self._lock:
             flag = self._cancel_flags.get(job_id)
             job = self._jobs.get(job_id)
-            if not flag or not job:
+            if not flag or not job or job.status in {"completed", "failed", "cancelled"}:
                 return False
             flag.set()
             if job.status in {"queued", "running"}:
@@ -123,9 +127,9 @@ class DualStreamService:
         errors: list[str] = []
         try:
             path.mkdir(parents=True, exist_ok=True)
-            probe = path / ".dualstream_write_test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
+            with tempfile.TemporaryFile(dir=path) as probe:
+                probe.write(b"ok")
+                probe.flush()
         except Exception as exc:
             errors.append(f"{label} '{path}' is not writable: {exc}")
         return errors
@@ -250,6 +254,12 @@ class DualStreamService:
             if not preflight["ok"]:
                 raise ValueError("Preflight failed: " + " | ".join(preflight["errors"]))
 
+            wire_version = payload.get("compact_wire_version", 0x0303)
+            if isinstance(wire_version, str):
+                wire_version = int(wire_version, 0)
+            if wire_version not in (0x0302, 0x0303):
+                raise ValueError("compact_wire_version must be 0x0302 or 0x0303")
+
             cfg = GenerationConfig(
                 model=payload.get("model", "gpt2"),
                 max_new_tokens=int(payload.get("max_new_tokens", 128)),
@@ -258,6 +268,8 @@ class DualStreamService:
                 top_p=float(payload.get("top_p", 1.0)),
                 do_sample=not bool(payload.get("greedy", False)),
                 seed=payload.get("seed"),
+                repetition_penalty=float(payload.get("repetition_penalty", 1.0)),
+                no_repeat_ngram_size=int(payload.get("no_repeat_ngram_size", 0)),
                 include_attn=bool(payload.get("include_attn", False)),
                 include_probes=bool(payload.get("include_probes", False)),
                 probe_pack_path=payload.get("probe_pack"),
@@ -267,7 +279,33 @@ class DualStreamService:
                 device=payload.get("device"),
                 local_files_only=preflight["offline"],
                 cache_dir=payload.get("cache_dir"),
+                audit_mode=payload.get("audit_mode", "tiered"),
+                poc_mode=payload.get("poc_mode", "none"),
+                randomized_audit=bool(payload.get("randomized_audit", False)),
+                audit_nonce=payload.get("audit_nonce"),
+                entropy_threshold=float(payload.get("entropy_threshold", 4.0)),
+                refusal_mass_threshold=float(payload.get("refusal_mass_threshold", 0.20)),
+                risk_threshold_review=float(payload.get("risk_threshold_review", 0.45)),
+                risk_threshold_fail=float(payload.get("risk_threshold_fail", 0.70)),
+                max_red_retries=int(payload.get("max_red_retries", 1)),
+                fallback_strategy=payload.get("fallback_strategy", "canned_refusal"),
+                selective_retention=not bool(payload.get("no_selective_retention", False)),
+                evidence_profile=payload.get("evidence_profile", "DSA-CI-Lite"),
+                compact_evidence=bool(payload.get("compact_evidence", False)),
+                adaptive_k=bool(payload.get("adaptive_k", False)),
+                max_adaptive_k=(
+                    int(payload["max_adaptive_k"])
+                    if payload.get("max_adaptive_k") is not None else None
+                ),
+                chunk_token_capacity=int(payload.get("chunk_token_capacity", 256)),
+                compact_wire_version=wire_version,
             )
+
+            if cfg.compact_evidence:
+                from .evidence_profile import get_evidence_profile
+
+                profile = get_evidence_profile(cfg.evidence_profile)
+                cfg.top_k = max(cfg.top_k, profile.base_k)
 
             with enforce_offline_env(cfg.local_files_only):
                 gen = DualStreamGenerator(

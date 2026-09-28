@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from dualstream.service import DualStreamService
 
@@ -77,3 +79,38 @@ def test_preflight_script_rejects_unknown_script(tmp_path) -> None:
     result = service.preflight_script({"script_name": "missing.py", "outdir": str(tmp_path)})
     assert result["ok"] is False
     assert any("Script not found" in err for err in result["errors"])
+
+
+def test_writable_directory_probe_preserves_existing_file(tmp_path):
+    existing = tmp_path / ".dualstream_write_test"
+    existing.write_text("user data")
+    assert DualStreamService._validate_writable_dir(tmp_path, "Output") == []
+    assert existing.read_text() == "user data"
+    assert list(tmp_path.iterdir()) == [existing]
+
+
+def test_cancelled_queued_job_never_runs():
+    service = DualStreamService()
+    service._executor.shutdown(wait=True)
+    service._executor = ThreadPoolExecutor(max_workers=1)
+    release = threading.Event()
+    started = threading.Event()
+    called = []
+
+    def blocking(job, cancelled):
+        started.set()
+        assert release.wait(5)
+        return {}
+
+    try:
+        first = service.create_job("blocker", blocking)
+        assert started.wait(5)
+        queued = service.create_job("queued", lambda *args: called.append(True) or {})
+        assert service.cancel_job(queued.id)
+    finally:
+        release.set()
+        service._executor.shutdown(wait=True)
+    assert not called
+    assert service.get_job(queued.id).status == "cancelled"
+    assert service.get_job(queued.id).ended_at is not None
+    assert service.cancel_job(first.id) is False

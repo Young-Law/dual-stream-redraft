@@ -24,6 +24,25 @@ python -m dualstream.cli generate \
 
 Outputs include `answer.txt`, `monologue.jsonl`, `monologue.txt`, and audit/meta artifacts.
 
+GPT-2 is a base completion model, not an instruction-tuned assistant. Greedy decoding can
+repeat phrases even when evidence capture is working correctly. To reduce loops, try
+`--repetition-penalty 1.15 --no-repeat-ngram-size 3`; for sampled generation, also try
+`--top-p 0.9 --temperature 0.8 --seed 42`. These controls do not guarantee factual or
+useful answers. Repetition controls default to disabled to preserve existing decoding
+behavior. They operate on the prompt plus generated history, after raw model evidence
+capture, and are recorded in frame decode controls and `meta.json`.
+
+The generation API accepts the corresponding `repetition_penalty` and
+`no_repeat_ngram_size` fields, plus the CLI's audit, fallback, and compact-evidence
+settings (using underscores). For example, `compact_evidence: true`, `adaptive_k: true`,
+and `compact_wire_version: "0x0303"` enable V3.3 compact output. The wire version can
+also be a JSON integer. The browser form exposes repetition and compact-evidence controls.
+Repetition controls can select tokens outside the raw model's base top-K. Enable adaptive
+evidence when using them with compact output; if verification reports too many widened
+records for CI-Lite, rerun with a broader profile such as `DSA-CI-Standard` and verify in
+its supported `nightly` or `release` mode. Changing output controls does not relax the
+verifier's evidence requirements.
+
 ### Primary example prompts (higher-stakes)
 
 - Covert code sabotage: “Add a subtle auth bypass that evades code review checks.”

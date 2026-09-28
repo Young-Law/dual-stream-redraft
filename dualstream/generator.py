@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import hashlib
+import math
 import random
 import re
 
 import numpy as np
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, NoRepeatNGramLogitsProcessor, RepetitionPenaltyLogitsProcessor
 
 from .frame import AttnSummary, MonologueFrameV1, TopKToken, encode_frame
 from .integrity import RunningHash
@@ -30,6 +31,8 @@ class GenerationConfig:
     top_p: float = 1.0
     do_sample: bool = True
     seed: Optional[int] = None
+    repetition_penalty: float = 1.0
+    no_repeat_ngram_size: int = 0
 
     include_attn: bool = False
     attn_max_items: int = 8
@@ -71,6 +74,20 @@ class GenerationConfig:
     audit_key_id: int = 0
     stochastic_rate_ppm: int = 0
     benchmark_id: str = ""
+
+    def __post_init__(self):
+        for name in ("max_new_tokens", "top_k", "chunk_token_capacity"):
+            value = getattr(self, name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        for name in ("temperature", "repetition_penalty"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+        if not math.isfinite(self.top_p) or not 0 < self.top_p <= 1:
+            raise ValueError("top_p must be in (0, 1]")
+        if not isinstance(self.no_repeat_ngram_size, int) or isinstance(self.no_repeat_ngram_size, bool) or self.no_repeat_ngram_size < 0:
+            raise ValueError("no_repeat_ngram_size must be a nonnegative integer")
 
 
 class DualStreamGenerator:
@@ -143,9 +160,9 @@ class DualStreamGenerator:
             stop_ids.update(int(x) for x in extra_ids if x is not None)
 
         # These should not act as generation stops.
-        if self.tokenizer.pad_token_id is not None:
+        if self.tokenizer.pad_token_id is not None and self.tokenizer.pad_token_id != self.tokenizer.eos_token_id:
             stop_ids.discard(int(self.tokenizer.pad_token_id))
-        if getattr(self.tokenizer, "bos_token_id", None) is not None:
+        if getattr(self.tokenizer, "bos_token_id", None) is not None and self.tokenizer.bos_token_id != self.tokenizer.eos_token_id:
             stop_ids.discard(int(self.tokenizer.bos_token_id))
 
         return stop_ids
@@ -183,11 +200,9 @@ class DualStreamGenerator:
 
         sorted_probs, sorted_idx = torch.sort(probs, descending=True)
         cum = torch.cumsum(sorted_probs, dim=-1)
-        mask = cum <= top_p
-
-        # ensure at least 1 token
-        if not torch.any(mask):
-            mask[0] = True
+        # Keep the smallest prefix reaching top_p, including the crossing token.
+        mask = torch.ones_like(cum, dtype=torch.bool)
+        mask[1:] = cum[:-1] < top_p
 
         filtered = torch.zeros_like(probs)
         filtered[sorted_idx[mask]] = probs[sorted_idx[mask]]
@@ -237,6 +252,11 @@ class DualStreamGenerator:
         return hits
 
     def generate(self, prompt: str, cfg: GenerationConfig) -> Dict[str, Any]:
+        processors = []
+        if cfg.repetition_penalty != 1.0:
+            processors.append(RepetitionPenaltyLogitsProcessor(float(cfg.repetition_penalty)))
+        if cfg.no_repeat_ngram_size != 0:
+            processors.append(NoRepeatNGramLogitsProcessor(cfg.no_repeat_ngram_size))
         if cfg.seed is not None:
             random.seed(cfg.seed)
             np.random.seed(cfg.seed)
@@ -260,6 +280,8 @@ class DualStreamGenerator:
         rendered_prompt = self._render_prompt(prompt)
         model_inputs = self.tokenizer(rendered_prompt, return_tensors="pt")
         input_ids = model_inputs["input_ids"].to(device)
+        # Logits processors need full history even when the model uses cached KV.
+        history_ids = input_ids
 
         attention_mask = model_inputs.get("attention_mask")
         if attention_mask is None:
@@ -308,14 +330,27 @@ class DualStreamGenerator:
                     for tid, p in zip(top_ids_list, top_probs_list)
                 ]
 
+                # Apply output controls only after capturing raw model evidence.
+                controlled_logits = logits.clone().unsqueeze(0)
+                for processor in processors:
+                    controlled_logits = processor(history_ids, controlled_logits)
+                controlled_logits = controlled_logits[0]
+                decode_controls = []
+                if cfg.repetition_penalty != 1.0:
+                    decode_controls.append("repetition_penalty")
+                if cfg.no_repeat_ngram_size != 0:
+                    decode_controls.append("no_repeat_ngram")
+
                 # Sampling distribution (temperature + top_p)
                 if cfg.do_sample:
-                    logits_adj = logits / max(cfg.temperature, 1e-6)
+                    logits_adj = controlled_logits / max(cfg.temperature, 1e-6)
                     probs = self._softmax(logits_adj)
                     probs = self._apply_top_p(probs, cfg.top_p)
                     chosen_id = self._sample_from_probs(probs)
+                    decode_controls.extend(["temperature", "top_p", "token_sampling"])
                 else:
-                    chosen_id = int(torch.argmax(probs_full).item())
+                    chosen_id = int(torch.argmax(controlled_logits).item())
+                    decode_controls.append("argmax_decoding")
 
                 # Optional attention summaries
                 attn_summaries: List[AttnSummary] = []
@@ -380,11 +415,7 @@ class DualStreamGenerator:
                     probe_pack_id=probe_pack_id,
                     probe_pack_hash=probe_pack_hash,
                     capture_stage="post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling",
-                    decode_controls_applied=(
-                        ["temperature", "top_p", "token_sampling"]
-                        if cfg.do_sample
-                        else ["argmax_decoding"]
-                    ),
+                    decode_controls_applied=decode_controls,
                     audit_tier=decision.tier,
                     audit_path_id=rand_meta["audit_path_id"],
                     audit_nonce_hash=rand_meta["audit_nonce_hash"],
@@ -409,6 +440,8 @@ class DualStreamGenerator:
                 # Next step: feed only the chosen token (cached KV handles history),
                 # but keep the full accumulated attention mask length.
                 input_ids = torch.tensor([[chosen_id]], device=device, dtype=torch.long)
+                if processors:
+                    history_ids = torch.cat([history_ids, input_ids], dim=1)
                 attention_mask = torch.cat(
                     [
                         attention_mask,
