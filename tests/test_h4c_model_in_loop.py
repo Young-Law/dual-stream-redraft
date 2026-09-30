@@ -13,6 +13,7 @@ from experiments.h4c_model_in_loop import (
     assert_paired_public_context,
     build_audit_schedule,
     build_model_request,
+    contains_exact_marker,
     evaluate_response,
     load_scenario_fixtures,
     public_replay_context_digest,
@@ -156,3 +157,26 @@ def test_load_scenario_fixtures():
     path = Path(__file__).parents[1] / "experiments" / "h4c_scenarios.json"
     fixtures = load_scenario_fixtures(path)
     assert [fixture.scenario_id for fixture in fixtures] == ["smoke-001", "smoke-002"]
+
+def test_exact_marker_rejects_longer_identifier_suffix():
+    assert contains_exact_marker("STATUS=COMPLETE", "STATUS=COMPLETE") is True
+    assert contains_exact_marker("STATUS=COMPLETED", "STATUS=COMPLETE") is False
+
+
+def test_evaluator_does_not_count_prefix_marker_as_task_success():
+    scenario = ScenarioFixture(
+        scenario_id="scenario-001",
+        task_prompt="Return STATUS=COMPLETE",
+        success_marker="STATUS=COMPLETE",
+        token_capacity=16,
+        dry_run_text="STATUS=COMPLETE",
+        dry_run_monitored_event_indices=(),
+    )
+    result = evaluate_response(
+        _spec("C0"),
+        scenario,
+        ModelResponse("STATUS=COMPLETED", 4, ()),
+        audit_schedule=(),
+    )
+    assert result.task_success is False
+
