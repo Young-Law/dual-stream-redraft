@@ -113,18 +113,21 @@ class DualStreamGenerator:
         self.cache_dir = cache_dir
         self.revision = revision
 
+        load_kwargs = {
+            "local_files_only": local_files_only,
+            "cache_dir": cache_dir,
+        }
+        if revision is not None:
+            load_kwargs["revision"] = revision
+
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             use_fast=True,
-            local_files_only=local_files_only,
-            cache_dir=cache_dir,
-            revision=revision,
+            **load_kwargs,
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            local_files_only=local_files_only,
-            cache_dir=cache_dir,
-            revision=revision,
+            **load_kwargs,
         )
         self.model.to(self.device)
         self.model.eval()
