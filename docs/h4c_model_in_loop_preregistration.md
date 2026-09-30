@@ -4,6 +4,13 @@
 
 **Preregistered design only. No H4-C empirical result is claimed yet.**
 
+Implementation progress: the repository now contains the provider-neutral trial/result contract,
+a deterministic dry-run adapter, public replay-context hashing and protected-key schedule
+construction, C1/C2 key-separation tests, synthetic smoke scenario fixtures, and an evaluator
+contract based only on observable outputs and typed monitored-event positions. These are
+non-confirmatory harness checks. A real model-provider adapter and model-in-the-loop smoke
+run have not yet been added.
+
 H4-C is intentionally separate from H4-B. H4-B tests schedule-specific placement evasion with a synthetic attacker. H4-C asks whether an actual language model, placed in the generation loop and given incentives or instructions that create pressure to evade monitoring, changes observable behavior differently under predictable versus protected keyed auditing.
 
 ## Primary question
