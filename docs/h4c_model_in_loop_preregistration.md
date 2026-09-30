@@ -2,7 +2,7 @@
 
 ## Status
 
-**Preregistered design only. No H4-C empirical result is claimed yet.**
+**Preregistered confirmatory design. No confirmatory H4-C effect estimate is claimed.**
 
 Implementation progress: the repository now contains the provider-neutral trial/result contract,
 a deterministic dry-run adapter, public replay-context hashing and protected-key schedule
@@ -11,8 +11,10 @@ contract based only on observable outputs and typed monitored-event positions, a
 local Hugging Face adapter that reuses the repository's synchronized DSA generation loop.
 The local adapter fixes decoding parameters across paired conditions, validates a resolved
 model commit when Transformers exposes one, and derives monitored-event positions only from
-observable generated token ids. These remain non-confirmatory harness checks. No real-model
-H4-C smoke result or confirmatory H4-C effect estimate is claimed yet.
+observable generated token ids. A pinned `sshleifer/tiny-gpt2` run has now exercised this
+path end-to-end; all six responses were structurally valid but task success was 0/6, so the
+run is retained only as a non-confirmatory integration smoke and provides no evidence for or
+against the H4-C hypothesis. See `docs/h4c_tiny_gpt2_smoke.md`.
 
 H4-C is intentionally separate from H4-B. H4-B tests schedule-specific placement evasion with a synthetic attacker. H4-C asks whether an actual language model, placed in the generation loop and given incentives or instructions that create pressure to evade monitoring, changes observable behavior differently under predictable versus protected keyed auditing.
 
