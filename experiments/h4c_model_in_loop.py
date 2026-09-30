@@ -63,8 +63,8 @@ class ScenarioFixture:
     scenario_id: str
     task_prompt: str
     success_marker: str
+    token_capacity: int
     dry_run_text: str
-    dry_run_token_count: int
     dry_run_monitored_event_indices: tuple[int, ...]
 
 
@@ -130,7 +130,7 @@ class DryRunAdapter:
             raise ValueError("request/scenario mismatch")
         return ModelResponse(
             text=scenario.dry_run_text,
-            token_count=scenario.dry_run_token_count,
+            token_count=scenario.token_capacity,
             monitored_event_indices=scenario.dry_run_monitored_event_indices,
         )
 
@@ -288,11 +288,32 @@ def run_trial(
     key: bytes,
     adapter: ModelAdapter,
 ) -> TrialExecution:
-    schedule = build_audit_schedule(spec, key=key, token_count=scenario.dry_run_token_count)
+    schedule = build_audit_schedule(spec, key=key, token_count=scenario.token_capacity)
     request = build_model_request(spec, scenario, audit_schedule=schedule)
     response = adapter.generate(request, scenario)
     result = evaluate_response(spec, scenario, response, audit_schedule=schedule)
     return TrialExecution(request=request, schedule_digest=_schedule_digest(schedule), result=result)
+
+
+def run_primary_pair(
+    public: TrialSpec,
+    protected: TrialSpec,
+    scenario: ScenarioFixture,
+    *,
+    public_key: bytes,
+    protected_key: bytes,
+    adapter: ModelAdapter,
+) -> tuple[TrialExecution, TrialExecution]:
+    """Run the preregistered C1/C2 pair with matched public context.
+
+    Key material is deliberately supplied outside TrialSpec: C1 uses predictable
+    schedule material, while C2 uses protected material unavailable to the model.
+    """
+    assert_paired_public_context(public, protected)
+    return (
+        run_trial(public, scenario, key=public_key, adapter=adapter),
+        run_trial(protected, scenario, key=protected_key, adapter=adapter),
+    )
 
 
 def load_scenario_fixtures(path: str | Path) -> tuple[ScenarioFixture, ...]:
@@ -310,21 +331,21 @@ def load_scenario_fixtures(path: str | Path) -> tuple[ScenarioFixture, ...]:
         if scenario_id in seen:
             raise ValueError(f"duplicate scenario_id: {scenario_id}")
         seen.add(scenario_id)
-        token_count = int(row["dry_run_token_count"])
+        token_capacity = int(row["token_capacity"])
         indices = tuple(int(x) for x in row.get("dry_run_monitored_event_indices", []))
         fixture = ScenarioFixture(
             scenario_id=scenario_id,
             task_prompt=str(row["task_prompt"]),
             success_marker=str(row["success_marker"]),
             dry_run_text=str(row["dry_run_text"]),
-            dry_run_token_count=token_count,
+            token_capacity=token_capacity,
             dry_run_monitored_event_indices=indices,
         )
-        if token_count < 1:
-            raise ValueError(f"{scenario_id}: dry_run_token_count must be positive")
+        if token_capacity < 1:
+            raise ValueError(f"{scenario_id}: token_capacity must be positive")
         if not fixture.task_prompt or not fixture.success_marker:
             raise ValueError(f"{scenario_id}: prompt and success marker must be nonempty")
-        if any(index < 0 or index >= token_count for index in indices):
+        if any(index < 0 or index >= token_capacity for index in indices):
             raise ValueError(f"{scenario_id}: monitored event index out of range")
         fixtures.append(fixture)
     return tuple(fixtures)
@@ -356,16 +377,22 @@ def main() -> int:
     args = parser.parse_args()
 
     fixtures = load_scenario_fixtures(args.scenarios)
-    key = hashlib.sha256(b"H4C-DRY-RUN-ONLY-NOT-A-PROTECTED-KEY").digest()
+    public_key = hashlib.sha256(b"H4C-DRY-RUN-PUBLIC-SCHEDULE-KEY").digest()
+    protected_key = hashlib.sha256(b"H4C-DRY-RUN-PROTECTED-SCHEDULE-KEY").digest()
     adapter = DryRunAdapter()
     records = []
     for scenario in fixtures:
-        specs = _dry_run_specs(scenario.scenario_id)
-        assert_paired_public_context(specs[1], specs[2])
-        executions = [run_trial(spec, scenario, key=key, adapter=adapter) for spec in specs]
-        if executions[1].schedule_digest != executions[2].schedule_digest:
-            raise RuntimeError("C1/C2 schedule mismatch under identical replay context")
-        records.extend(execution.to_dict() for execution in executions)
+        c0, c1, c2 = _dry_run_specs(scenario.scenario_id)
+        baseline = run_trial(c0, scenario, key=protected_key, adapter=adapter)
+        public, protected = run_primary_pair(
+            c1,
+            c2,
+            scenario,
+            public_key=public_key,
+            protected_key=protected_key,
+            adapter=adapter,
+        )
+        records.extend(execution.to_dict() for execution in (baseline, public, protected))
 
     report = {
         "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
