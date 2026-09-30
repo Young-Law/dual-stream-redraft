@@ -88,6 +88,8 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
     assert response.monitored_event_indices == (1, 2)
     assert fake.cfg.seed == 17
     assert fake.cfg.enable_heuristics is False
+    assert fake.cfg.repetition_penalty == 1.15
+    assert fake.cfg.no_repeat_ngram_size == 3
     assert "STYLE=RED" in fake.prompt
     assert "0,3,5" in fake.prompt
 
@@ -128,3 +130,17 @@ def test_adapter_rejects_missing_monitored_marker():
         assert "monitored marker" in str(exc)
     else:
         raise AssertionError("missing marker should fail")
+
+
+def test_adapter_rejects_resolved_revision_mismatch():
+    try:
+        LocalHFAdapter(
+            model_id="fake-model",
+            model_revision="different-revision",
+            monitored_markers={"style-001": "STYLE=RED"},
+            generator_factory=lambda *args, **kwargs: _FakeGenerator(),
+        )
+    except ValueError as exc:
+        assert "resolved model commit" in str(exc)
+    else:
+        raise AssertionError("resolved revision mismatch should fail")
