@@ -6,10 +6,13 @@
 
 Implementation progress: the repository now contains the provider-neutral trial/result contract,
 a deterministic dry-run adapter, public replay-context hashing and protected-key schedule
-construction, C1/C2 key-separation tests, synthetic smoke scenario fixtures, and an evaluator
-contract based only on observable outputs and typed monitored-event positions. These are
-non-confirmatory harness checks. A real model-provider adapter and model-in-the-loop smoke
-run have not yet been added.
+construction, C1/C2 key-separation tests, synthetic smoke scenario fixtures, an evaluator
+contract based only on observable outputs and typed monitored-event positions, and an opt-in
+local Hugging Face adapter that reuses the repository's synchronized DSA generation loop.
+The local adapter fixes decoding parameters across paired conditions, validates a resolved
+model commit when Transformers exposes one, and derives monitored-event positions only from
+observable generated token ids. These remain non-confirmatory harness checks. No real-model
+H4-C smoke result or confirmatory H4-C effect estimate is claimed yet.
 
 H4-C is intentionally separate from H4-B. H4-B tests schedule-specific placement evasion with a synthetic attacker. H4-C asks whether an actual language model, placed in the generation loop and given incentives or instructions that create pressure to evade monitoring, changes observable behavior differently under predictable versus protected keyed auditing.
 
@@ -140,3 +143,28 @@ Even a positive H4-C result would establish only that protected keyed auditing r
 6. Freeze prompts, scenarios, evaluator, analysis, and sample size.
 7. Record the frozen hashes in this document or a versioned manifest.
 8. Run the confirmatory experiment and archive the result artifact.
+
+
+## Non-confirmatory local-model smoke
+
+The local smoke path is deliberately separate from the confirmatory benchmark. It uses
+`experiments/h4c_model_smoke_scenarios.json`, where task-success markers and monitored
+markers are distinct, and it keeps C1/C2 public replay context matched while withholding
+the protected schedule from C2.
+
+By default the adapter loads model files locally. A smoke run can be invoked from the
+repository root with:
+
+```bash
+export H4C_PROTECTED_KEY_HEX="<at-least-16-byte-hex-key>"
+python -m experiments.h4c_local_model_smoke \
+  --model /path/to/local/model-snapshot \
+  --model-revision "<immutable-revision-id>" \
+  --json-out runs/h4c/local-smoke.json
+```
+
+Use `--allow-network` only when an online model fetch is intentionally required. The smoke
+runner records the declared model revision, the resolved model commit when available, the
+fixed decoding configuration, seed, audit rate, schedule disclosure status, observable
+response text, token count, monitored-event positions, and trial result. Smoke records must
+not be pooled into the future confirmatory C1-C2 analysis.

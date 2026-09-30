@@ -105,22 +105,29 @@ class DualStreamGenerator:
         device: Optional[str] = None,
         local_files_only: bool = False,
         cache_dir: Optional[str] = None,
+        revision: Optional[str] = None,
     ):
         self.model_name = model_name
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.local_files_only = local_files_only
         self.cache_dir = cache_dir
+        self.revision = revision
+
+        load_kwargs = {
+            "local_files_only": local_files_only,
+            "cache_dir": cache_dir,
+        }
+        if revision is not None:
+            load_kwargs["revision"] = revision
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             use_fast=True,
-            local_files_only=local_files_only,
-            cache_dir=cache_dir,
+            **load_kwargs,
         )
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            local_files_only=local_files_only,
-            cache_dir=cache_dir,
+            **load_kwargs,
         )
         self.model.to(self.device)
         self.model.eval()
