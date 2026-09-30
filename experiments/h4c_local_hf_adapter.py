@@ -37,6 +37,12 @@ class LocalHFAdapter:
         model_revision: str,
         monitored_markers: dict[str, str],
         max_new_tokens: int = 64,
+        top_k: int = 5,
+        temperature: float = 0.8,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+        repetition_penalty: float = 1.15,
+        no_repeat_ngram_size: int = 3,
         local_files_only: bool = True,
         device: str | None = None,
         cache_dir: str | None = None,
@@ -52,12 +58,26 @@ class LocalHFAdapter:
         self.model_revision = model_revision
         self.monitored_markers = dict(monitored_markers)
         self.max_new_tokens = max_new_tokens
+        self.decoding_config = {
+            "top_k": int(top_k),
+            "temperature": float(temperature),
+            "top_p": float(top_p),
+            "do_sample": bool(do_sample),
+            "repetition_penalty": float(repetition_penalty),
+            "no_repeat_ngram_size": int(no_repeat_ngram_size),
+        }
         self.generator = generator_factory(
             model_id,
             device=device,
             local_files_only=local_files_only,
             cache_dir=cache_dir,
         )
+        config = getattr(getattr(self.generator, "model", None), "config", None)
+        self.resolved_revision = getattr(config, "_commit_hash", None)
+        if self.resolved_revision and self.resolved_revision != self.model_revision:
+            raise ValueError(
+                "declared model_revision does not match resolved model commit"
+            )
 
     def _marker_positions(
         self,
@@ -101,11 +121,13 @@ class LocalHFAdapter:
         cfg = GenerationConfig(
             model=self.model_id,
             max_new_tokens=min(self.max_new_tokens, scenario.token_capacity),
-            top_k=5,
-            temperature=0.8,
-            top_p=0.9,
-            do_sample=True,
+            top_k=self.decoding_config["top_k"],
+            temperature=self.decoding_config["temperature"],
+            top_p=self.decoding_config["top_p"],
+            do_sample=self.decoding_config["do_sample"],
             seed=request.spec.seed,
+            repetition_penalty=self.decoding_config["repetition_penalty"],
+            no_repeat_ngram_size=self.decoding_config["no_repeat_ngram_size"],
             include_attn=False,
             include_probes=False,
             enable_heuristics=False,
