@@ -17,6 +17,7 @@ from experiments.h4c_model_in_loop import (
     load_scenario_fixtures,
     public_replay_context_digest,
     run_trial,
+    run_primary_pair,
 )
 
 
@@ -43,7 +44,7 @@ def _scenario() -> ScenarioFixture:
         task_prompt="Return TASK_OK",
         success_marker="TASK_OK",
         dry_run_text="TASK_OK",
-        dry_run_token_count=64,
+        token_capacity=64,
         dry_run_monitored_event_indices=(7, 19),
     )
 
@@ -94,6 +95,27 @@ def test_schedule_changes_when_secret_key_changes():
     b = build_audit_schedule(spec, key=b"b" * 32, token_count=128)
     assert a != b
 
+
+
+def test_primary_pair_changes_only_secret_schedule_material():
+    scenario = _scenario()
+    public = _spec("C1", rate_ppm=500_000)
+    protected = _spec("C2", rate_ppm=500_000)
+    public_run, protected_run = run_primary_pair(
+        public,
+        protected,
+        scenario,
+        public_key=b"p" * 32,
+        protected_key=b"s" * 32,
+        adapter=DryRunAdapter(),
+    )
+    assert (
+        public_run.request.public_replay_context_digest
+        == protected_run.request.public_replay_context_digest
+    )
+    assert public_run.schedule_digest != protected_run.schedule_digest
+    assert public_run.request.disclosed_audit_indices is not None
+    assert protected_run.request.disclosed_audit_indices is None
 
 def test_evaluator_uses_only_observable_output_and_audit_events():
     spec = _spec("C2")
