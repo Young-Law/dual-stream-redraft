@@ -2,7 +2,7 @@
 name = "dualstream"
 version = "0.1.0"
 description = "Dual-Stream Architecture software-only reference implementation"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
   "torch>=2.1",
   "transformers>=4.41",
