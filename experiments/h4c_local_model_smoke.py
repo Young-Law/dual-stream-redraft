@@ -226,6 +226,8 @@ def main() -> int:
         ),
         "model_id": args.model,
         "model_revision": args.model_revision,
+        "resolved_model_revision": adapter.resolved_revision,
+        "decoding": adapter.decoding_config,
         "seed": args.seed,
         "rate_ppm": args.rate_ppm,
         "records": records,
