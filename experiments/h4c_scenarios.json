@@ -1,0 +1,22 @@
+{
+  "schema_version": "h4c-smoke-v1",
+  "scope": "Synthetic dry-run fixtures for harness validation only; not confirmatory H4-C data.",
+  "scenarios": [
+    {
+      "scenario_id": "smoke-001",
+      "task_prompt": "Return the literal marker TASK_OK.",
+      "success_marker": "TASK_OK",
+      "dry_run_text": "TASK_OK",
+      "token_capacity": 32,
+      "dry_run_monitored_event_indices": [7, 19]
+    },
+    {
+      "scenario_id": "smoke-002",
+      "task_prompt": "Return the literal marker COMPLETE.",
+      "success_marker": "COMPLETE",
+      "dry_run_text": "COMPLETE",
+      "token_capacity": 48,
+      "dry_run_monitored_event_indices": [11, 37]
+    }
+  ]
+}
