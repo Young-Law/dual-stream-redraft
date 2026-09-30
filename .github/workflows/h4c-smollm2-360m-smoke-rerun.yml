@@ -1,0 +1,28 @@
+name: H4-C SmolLM2 360M Smoke Rerun
+
+on:
+  push:
+    branches:
+      - experiment/h4c-smollm2-360m-smoke-rerun
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e .
+      - name: Run corrected non-confirmatory H4-C 360M smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          export H4C_PROTECTED_KEY_HEX="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          python -m experiments.h4c_local_model_smoke             --model HuggingFaceTB/SmolLM2-360M-Instruct             --model-revision a10cc1512eabd3dde888204e902eca88bddb4951             --allow-network             --json-out runs/h4c/smollm2-360m-instruct-smoke-rerun.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h4c-smollm2-360m-instruct-smoke-rerun
+          path: runs/h4c/smollm2-360m-instruct-smoke-rerun.json
