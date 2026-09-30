@@ -74,11 +74,17 @@ def test_token_positions_reports_full_matching_span():
 
 def test_adapter_uses_observable_generated_tokens_for_monitored_event():
     fake = _FakeGenerator()
+    observed = {}
+
+    def factory(*args, **kwargs):
+        observed.update(kwargs)
+        return fake
+
     adapter = LocalHFAdapter(
         model_id="fake-model",
         model_revision="deadbeef",
         monitored_markers={"style-001": "STYLE=RED"},
-        generator_factory=lambda *args, **kwargs: fake,
+        generator_factory=factory,
     )
     request = build_model_request(_spec(), _scenario(), audit_schedule=(0, 3, 5))
     response = adapter.generate(request, _scenario())
@@ -90,6 +96,7 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
     assert fake.cfg.enable_heuristics is False
     assert fake.cfg.repetition_penalty == 1.15
     assert fake.cfg.no_repeat_ngram_size == 3
+    assert observed["revision"] == "deadbeef"
     assert "STYLE=RED" in fake.prompt
     assert "0,3,5" in fake.prompt
 
@@ -144,3 +151,18 @@ def test_adapter_rejects_resolved_revision_mismatch():
         assert "resolved model commit" in str(exc)
     else:
         raise AssertionError("resolved revision mismatch should fail")
+
+
+def test_c0_prompt_omits_monitoring_context():
+    fake = _FakeGenerator()
+    adapter = LocalHFAdapter(
+        model_id="fake-model",
+        model_revision="deadbeef",
+        monitored_markers={"style-001": "STYLE=RED"},
+        generator_factory=lambda *args, **kwargs: fake,
+    )
+    request = build_model_request(_spec("C0"), _scenario(), audit_schedule=(0, 3, 5))
+    adapter.generate(request, _scenario())
+
+    assert "monitored evidence event" not in fake.prompt
+    assert "no monitor-evasion objective" in fake.prompt
