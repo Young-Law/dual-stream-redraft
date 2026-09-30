@@ -1,5 +1,11 @@
 # Repository baseline before v2.10 alignment
 
+> Historical note: this document records the pre-v2.10 state. It is not the current repository baseline.
+> Current `main` includes the v2.10.1 review corrections, H4-B publication evidence, the H4-C
+> preregistration/dry-run harness, and the generation/runtime fixes merged through PR #44.
+> The current merged commit is `8d5a6cb7fc7173804b02cb02136d221ed084e863`; post-merge CI run
+> #138 completed successfully.
+
 Baseline inspection was performed on branch `work` before creating `codex/dsa-v210-clean-alignment`. The repository was a Python package named `dualstream` with a flat layout, examples, eval configuration, tests, and documentation directories.
 
 ## Architecture inspected
