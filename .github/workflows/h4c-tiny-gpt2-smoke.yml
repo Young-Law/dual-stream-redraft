@@ -1,0 +1,27 @@
+name: H4-C Tiny GPT-2 Smoke
+
+on:
+  push:
+    branches:
+      - experiment/h4c-tiny-gpt2-smoke
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -e .
+      - name: Run non-confirmatory H4-C smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          export H4C_PROTECTED_KEY_HEX="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          python -m experiments.h4c_local_model_smoke             --model sshleifer/tiny-gpt2             --model-revision 5855d809b42956212444c53951510034ad972a5b             --allow-network             --json-out runs/h4c/tiny-gpt2-smoke.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: h4c-tiny-gpt2-smoke
+          path: runs/h4c/tiny-gpt2-smoke.json
