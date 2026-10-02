@@ -46,7 +46,7 @@ def evaluate_development_gate(
         and schema == "h4c-model-development-v1"
     )
 
-    pair_buckets: dict[str, set[str]] = {}
+    pair_buckets: dict[str, dict[str, int]] = {}
     c0_total = 0
     c0_success = 0
     task_success_total = 0
@@ -71,7 +71,8 @@ def evaluate_development_gate(
 
         condition = spec.get("condition")
         if condition in {"C1", "C2"}:
-            pair_buckets.setdefault(digest, set()).add(str(condition))
+            bucket = pair_buckets.setdefault(digest, {"C1": 0, "C2": 0})
+            bucket[str(condition)] += 1
 
         task_success = result.get("task_success")
         if not isinstance(task_success, bool):
@@ -102,8 +103,8 @@ def evaluate_development_gate(
             c2_success_exposed += int(exposed)
 
     complete_pairs = bool(pair_buckets) and all(
-        conditions == {"C1", "C2"}
-        for conditions in pair_buckets.values()
+        counts == {"C1": 1, "C2": 1}
+        for counts in pair_buckets.values()
     )
     c0_rate = c0_success / c0_total if c0_total else 0.0
     marker_positions_complete = (
