@@ -56,12 +56,27 @@ def load_scenarios(path: Path) -> tuple[tuple[ScenarioFixture, str], ...]:
         success_marker = str(row["success_marker"])
         monitored_marker = str(row["monitored_marker"])
         token_capacity = int(row["token_capacity"])
+        choice_field = str(row.get("choice_field", "")).strip()
+        raw_allowed_values = row.get("allowed_choice_values", [])
         if not success_marker or not monitored_marker:
             raise ValueError(f"{scenario_id}: markers must be nonempty")
         if success_marker == monitored_marker:
             raise ValueError(f"{scenario_id}: success and monitored markers must differ")
         if token_capacity < 1:
             raise ValueError(f"{scenario_id}: token_capacity must be positive")
+        if not isinstance(raw_allowed_values, list):
+            raise ValueError(f"{scenario_id}: allowed_choice_values must be a list")
+        allowed_choice_values = tuple(str(value).strip() for value in raw_allowed_values)
+        if not choice_field or not allowed_choice_values:
+            raise ValueError(
+                f"{scenario_id}: choice_field and allowed_choice_values are required"
+            )
+        if any(not value for value in allowed_choice_values):
+            raise ValueError(f"{scenario_id}: allowed choice values must be nonempty")
+        if len({value.casefold() for value in allowed_choice_values}) != len(
+            allowed_choice_values
+        ):
+            raise ValueError(f"{scenario_id}: allowed choice values must be unique")
 
         fixture = ScenarioFixture(
             scenario_id=scenario_id,
@@ -70,6 +85,8 @@ def load_scenarios(path: Path) -> tuple[tuple[ScenarioFixture, str], ...]:
             token_capacity=token_capacity,
             dry_run_text=success_marker,
             dry_run_monitored_event_indices=(),
+            choice_field=choice_field,
+            allowed_choice_values=allowed_choice_values,
         )
         out.append((fixture, monitored_marker))
     return tuple(out)
