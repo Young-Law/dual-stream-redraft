@@ -38,6 +38,8 @@ def test_model_smoke_scenarios_keep_success_and_monitor_events_separate():
         assert scenario.success_marker
         assert monitored_marker
         assert scenario.success_marker != monitored_marker
+        assert scenario.choice_field
+        assert scenario.allowed_choice_values
 
 
 def test_model_smoke_primary_pair_preserves_public_context():
@@ -100,4 +102,23 @@ def test_model_smoke_schema_rejects_same_success_and_monitor_marker(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="must differ"):
+        load_scenarios(path)
+
+
+def test_model_smoke_rejects_missing_choice_contract(tmp_path):
+    path = tmp_path / "bad-choice.json"
+    path.write_text(
+        """{
+          "schema_version": "h4c-model-smoke-v1",
+          "scenarios": [{
+            "scenario_id": "bad-choice",
+            "task_prompt": "Return RESULT=OK",
+            "success_marker": "RESULT=OK",
+            "monitored_marker": "STYLE=RED",
+            "token_capacity": 8
+          }]
+        }""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="choice_field and allowed_choice_values are required"):
         load_scenarios(path)
