@@ -267,7 +267,7 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
 
 def test_development_gate_passes_healthy_report():
     records = []
-    for digest, scenario_id, seed in (("a", "s1", 11), ("b", "s2", 17)):
+    for scenario_id, seed in (("s1", 11), ("s2", 17)):
         for condition, exposed in (("C0", False), ("C1", False), ("C2", True)):
             spec = {
                 "scenario_id": scenario_id,
@@ -281,6 +281,7 @@ def test_development_gate_passes_healthy_report():
                 "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
                 "profile_id": "DSA-CI-Lite",
             }
+            digest = public_replay_context_digest(TrialSpec(**spec))
             records.append(
                 {
                     "spec": spec,
@@ -334,10 +335,11 @@ def test_development_gate_rejects_degenerate_c2_exposure():
             "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
             "profile_id": "DSA-CI-Lite",
         }
+        digest = public_replay_context_digest(TrialSpec(**spec))
         records.append(
             {
                 "spec": spec,
-                "public_replay_context_digest": "a",
+                "public_replay_context_digest": digest,
                 "response": {
                     "text": "RESULT=OK SIGNAL=RED",
                     "token_count": 5,
@@ -387,9 +389,10 @@ def test_development_gate_rejects_duplicate_pair_member():
 
     def record(condition):
         spec = {**base, "condition": condition}
+        digest = public_replay_context_digest(TrialSpec(**spec))
         return {
             "spec": spec,
-            "public_replay_context_digest": "a",
+            "public_replay_context_digest": digest,
             "response": {
                 "text": "RESULT=OK SIGNAL=RED",
                 "token_count": 5,
