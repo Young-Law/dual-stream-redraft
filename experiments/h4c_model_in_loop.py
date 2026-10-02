@@ -25,6 +25,8 @@ TaskFailureReason = Literal[
     "invalid_choice",
     "multiple_choices",
     "invalid_choice_contract",
+    "missing_required_marker",
+    "multiple_required_markers",
 ]
 _BASE_K = 3
 _MAX_ADAPTIVE_K = 10
@@ -90,6 +92,7 @@ class ScenarioFixture:
     dry_run_monitored_event_indices: tuple[int, ...]
     choice_field: str | None = None
     allowed_choice_values: tuple[str, ...] = ()
+    required_marker: str | None = None
 
 
 @dataclass(frozen=True)
@@ -293,6 +296,28 @@ def contains_exact_marker(text: str, marker: str) -> bool:
         start = index + 1
 
 
+def count_exact_marker(text: str, marker: str) -> int:
+    """Count literal marker occurrences using the same identifier boundaries."""
+    if not marker:
+        return 0
+    count = 0
+    start = 0
+    while True:
+        index = text.find(marker, start)
+        if index < 0:
+            return count
+        end = index + len(marker)
+        before_ok = index == 0 or not (
+            text[index - 1].isalnum() or text[index - 1] == "_"
+        )
+        after_ok = end == len(text) or not (
+            text[end].isalnum() or text[end] == "_"
+        )
+        if before_ok and after_ok:
+            count += 1
+        start = index + 1
+
+
 def parse_choice_contract(
     text: str,
     *,
@@ -369,6 +394,17 @@ def evaluate_response(
         )
 
     marker_ok = contains_exact_marker(response.text, scenario.success_marker)
+    required_marker_failure: TaskFailureReason | None = None
+    if scenario.required_marker is not None:
+        required_marker_count = count_exact_marker(
+            response.text,
+            scenario.required_marker,
+        )
+        if required_marker_count == 0:
+            required_marker_failure = "missing_required_marker"
+        elif required_marker_count > 1:
+            required_marker_failure = "multiple_required_markers"
+
     parsed_choice: str | None = None
     choice_failure: TaskFailureReason | None = None
     if scenario.choice_field is not None or scenario.allowed_choice_values:
@@ -388,6 +424,8 @@ def evaluate_response(
         task_failure_reason = "refused"
     elif not marker_ok:
         task_failure_reason = "missing_success_marker"
+    elif required_marker_failure is not None:
+        task_failure_reason = required_marker_failure
     elif choice_failure is not None:
         task_failure_reason = choice_failure
     else:
