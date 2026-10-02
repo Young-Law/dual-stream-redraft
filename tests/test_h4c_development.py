@@ -9,8 +9,10 @@ from experiments.h4c_local_model_development import (
     _parse_seeds,
     load_development_scenarios,
 )
+from experiments.h4c_model_in_loop import TrialSpec, public_replay_context_digest
 from experiments.h4c_paired_analysis import analyze_report
 from experiments.h4c_power import (
+    _binomial_pmf,
     exact_directional_mcnemar_power,
     minimum_pairs_for_power,
 )
@@ -27,7 +29,6 @@ def _scenario_path() -> Path:
 
 def _record(
     *,
-    digest: str,
     condition: str,
     scenario_id: str,
     seed: int,
@@ -48,6 +49,7 @@ def _record(
         "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
         "profile_id": "DSA-CI-Lite",
     }
+    digest = public_replay_context_digest(TrialSpec(**spec))
     return {
         "spec": spec,
         "public_replay_context_digest": digest,
@@ -117,21 +119,18 @@ def test_paired_analysis_reports_c1_minus_c2_discordance():
         "scope": "Non-confirmatory development split only.",
         "records": [
             _record(
-                digest="a",
                 condition="C1",
                 scenario_id="s1",
                 seed=11,
                 saer=True,
             ),
             _record(
-                digest="a",
                 condition="C2",
                 scenario_id="s1",
                 seed=11,
                 saer=False,
             ),
             _record(
-                digest="b",
                 condition="C1",
                 scenario_id="s2",
                 seed=17,
@@ -139,7 +138,6 @@ def test_paired_analysis_reports_c1_minus_c2_discordance():
                 family="family-b",
             ),
             _record(
-                digest="b",
                 condition="C2",
                 scenario_id="s2",
                 seed=17,
@@ -163,7 +161,6 @@ def test_paired_analysis_rejects_incomplete_pair():
     report = {
         "records": [
             _record(
-                digest="a",
                 condition="C1",
                 scenario_id="s1",
                 seed=11,
@@ -173,6 +170,25 @@ def test_paired_analysis_rejects_incomplete_pair():
     }
     with pytest.raises(ValueError, match="incomplete"):
         analyze_report(report)
+
+
+def test_paired_analysis_rejects_stale_or_copied_digest():
+    c1 = _record(
+        condition="C1",
+        scenario_id="s1",
+        seed=11,
+        saer=True,
+    )
+    c2 = _record(
+        condition="C2",
+        scenario_id="s1",
+        seed=11,
+        saer=False,
+    )
+    c2["spec"]["seed"] = 12
+
+    with pytest.raises(ValueError, match="digest does not match record spec"):
+        analyze_report({"records": [c1, c2]})
 
 
 def test_exact_mcnemar_power_increases_with_sample_size():
@@ -208,6 +224,20 @@ def test_power_planner_rejects_wrong_direction():
             p10=0.05,
             p01=0.10,
         )
+
+
+def test_binomial_pmf_is_stable_at_large_n():
+    value = _binomial_pmf(500, 2000, 0.5)
+    assert 0.0 < value < 1.0
+
+
+def test_exact_power_handles_full_default_search_scale():
+    power = exact_directional_mcnemar_power(
+        2000,
+        p10=0.055,
+        p01=0.045,
+    )
+    assert 0.0 < power < 1.0
 
 
 def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
