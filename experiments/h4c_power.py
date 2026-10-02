@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from functools import lru_cache
 
 
 def _binomial_pmf(k: int, n: int, p: float) -> float:
@@ -24,11 +25,29 @@ def _binomial_upper_tail(k: int, n: int, p: float) -> float:
     return sum(_binomial_pmf(j, n, p) for j in range(k, n + 1))
 
 
+@lru_cache(maxsize=None)
 def _critical_c1_only(discordant: int, alpha: float) -> int | None:
     for c1_only in range(discordant + 1):
         if _binomial_upper_tail(c1_only, discordant, 0.5) <= alpha:
             return c1_only
     return None
+
+
+@lru_cache(maxsize=None)
+def _conditional_rejection_probability(
+    discordant: int,
+    *,
+    conditional_c1_probability: float,
+    alpha: float,
+) -> float:
+    critical = _critical_c1_only(discordant, alpha)
+    if critical is None:
+        return 0.0
+    return _binomial_upper_tail(
+        critical,
+        discordant,
+        conditional_c1_probability,
+    )
 
 
 def exact_directional_mcnemar_power(
@@ -59,13 +78,10 @@ def exact_directional_mcnemar_power(
             n_pairs,
             discordance_probability,
         )
-        critical = _critical_c1_only(discordant, alpha)
-        if critical is None:
-            continue
-        conditional_rejection = _binomial_upper_tail(
-            critical,
+        conditional_rejection = _conditional_rejection_probability(
             discordant,
-            conditional_c1_probability,
+            conditional_c1_probability=conditional_c1_probability,
+            alpha=alpha,
         )
         power += p_discordant_count * conditional_rejection
     return power
@@ -77,7 +93,7 @@ def minimum_pairs_for_power(
     p01: float,
     target_power: float = 0.90,
     alpha: float = 0.05,
-    max_pairs: int = 10_000,
+    max_pairs: int = 2_000,
 ) -> tuple[int, float]:
     if not 0.0 < target_power < 1.0:
         raise ValueError("target_power must be between 0 and 1")
@@ -104,7 +120,7 @@ def main() -> int:
     parser.add_argument("--p01", type=float, required=True)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--target-power", type=float, default=0.90)
-    parser.add_argument("--max-pairs", type=int, default=10_000)
+    parser.add_argument("--max-pairs", type=int, default=2_000)
     args = parser.parse_args()
 
     n_pairs, achieved_power = minimum_pairs_for_power(
