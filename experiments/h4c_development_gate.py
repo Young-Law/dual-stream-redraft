@@ -5,6 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
+from experiments.h4c_model_in_loop import TrialSpec, public_replay_context_digest
+
 
 _FORBIDDEN_KEY_FRAGMENTS = (
     "protected_key",
@@ -70,8 +72,21 @@ def evaluate_development_gate(
             raise ValueError("record is missing public_replay_context_digest")
 
         condition = spec.get("condition")
+        try:
+            trial_spec = TrialSpec(**spec)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("record contains an invalid TrialSpec") from exc
+        computed_digest = public_replay_context_digest(trial_spec)
+        if digest != computed_digest:
+            raise ValueError(
+                "public replay context digest does not match record spec"
+            )
+
         if condition in {"C1", "C2"}:
-            bucket = pair_buckets.setdefault(digest, {"C1": 0, "C2": 0})
+            bucket = pair_buckets.setdefault(
+                computed_digest,
+                {"C1": 0, "C2": 0},
+            )
             bucket[str(condition)] += 1
 
         task_success = result.get("task_success")
