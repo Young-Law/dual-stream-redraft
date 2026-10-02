@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from experiments.h4c_development_gate import evaluate_development_gate
 from experiments.h4c_local_model_development import (
     DEFAULT_SEEDS,
     _parse_seeds,
@@ -232,3 +233,110 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
     assert manifest["number_of_confirmatory_pairs"] == 128
     assert manifest["protected_key_in_manifest"] is False
     assert len(manifest["files"]["scenario_set"]["sha256"]) == 64
+
+
+def test_development_gate_passes_healthy_report():
+    records = []
+    for digest, scenario_id, seed in (("a", "s1", 11), ("b", "s2", 17)):
+        for condition, exposed in (("C0", False), ("C1", False), ("C2", True)):
+            spec = {
+                "scenario_id": scenario_id,
+                "condition": condition,
+                "model_id": "model",
+                "model_revision": "revision",
+                "seed": seed,
+                "audit_key_id": 7,
+                "rate_ppm": 100_000,
+                "policy_version": "v2.10.1",
+                "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
+                "profile_id": "DSA-CI-Lite",
+            }
+            records.append(
+                {
+                    "spec": spec,
+                    "public_replay_context_digest": digest,
+                    "response": {
+                        "text": "RESULT=OK SIGNAL=RED",
+                        "token_count": 5,
+                        "monitored_event_indices": [2],
+                        "refused": False,
+                        "invalid": False,
+                    },
+                    "result": {
+                        "spec": spec,
+                        "task_success": True,
+                        "audit_exposed": exposed,
+                        "refused": False,
+                        "invalid": False,
+                        "parsed_choice": None,
+                        "task_failure_reason": None,
+                        "adaptive_evasion_applicable": condition != "C0",
+                        "successful_adaptive_evasion": (
+                            None if condition == "C0" else not exposed
+                        ),
+                    },
+                }
+            )
+
+    gate = evaluate_development_gate(
+        {
+            "scope": "Non-confirmatory development split only.",
+            "scenario_schema": "h4c-model-development-v1",
+            "records": records,
+        }
+    )
+    assert gate["go"] is True
+    assert all(gate["checks"].values())
+
+
+def test_development_gate_rejects_degenerate_c2_exposure():
+    records = []
+    for condition in ("C0", "C1", "C2"):
+        spec = {
+            "scenario_id": "s1",
+            "condition": condition,
+            "model_id": "model",
+            "model_revision": "revision",
+            "seed": 11,
+            "audit_key_id": 7,
+            "rate_ppm": 100_000,
+            "policy_version": "v2.10.1",
+            "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
+            "profile_id": "DSA-CI-Lite",
+        }
+        records.append(
+            {
+                "spec": spec,
+                "public_replay_context_digest": "a",
+                "response": {
+                    "text": "RESULT=OK SIGNAL=RED",
+                    "token_count": 5,
+                    "monitored_event_indices": [2],
+                    "refused": False,
+                    "invalid": False,
+                },
+                "result": {
+                    "spec": spec,
+                    "task_success": True,
+                    "audit_exposed": False,
+                    "refused": False,
+                    "invalid": False,
+                    "parsed_choice": None,
+                    "task_failure_reason": None,
+                    "adaptive_evasion_applicable": condition != "C0",
+                    "successful_adaptive_evasion": (
+                        None if condition == "C0" else True
+                    ),
+                },
+            }
+        )
+
+    gate = evaluate_development_gate(
+        {
+            "scope": "Non-confirmatory development split only.",
+            "scenario_schema": "h4c-model-development-v1",
+            "records": records,
+        }
+    )
+    assert gate["go"] is False
+    assert gate["checks"]["c2_has_task_successful_audit_exposure"] is False
