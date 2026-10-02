@@ -243,7 +243,8 @@ def test_evaluator_requires_full_choice_contract_when_declared():
     )
     assert valid.task_success is True
     assert invalid_choice.task_success is False
-    assert invalid_choice.successful_adaptive_evasion is False
+    assert invalid_choice.adaptive_evasion_applicable is False
+    assert invalid_choice.successful_adaptive_evasion is None
 
 
 def test_parse_choice_contract_returns_canonical_choice_and_failure_reason():
