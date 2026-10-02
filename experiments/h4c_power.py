@@ -17,20 +17,83 @@ import math
 from functools import lru_cache
 
 
+@lru_cache(maxsize=None)
+def _binomial_distribution(n: int, p: float) -> tuple[float, ...]:
+    """Return a normalized binomial PMF without large integer-to-float products."""
+    if n < 0:
+        raise ValueError("n must be nonnegative")
+    if not 0.0 <= p <= 1.0:
+        raise ValueError("p must be between 0 and 1")
+    if p == 0.0:
+        return (1.0,) + (0.0,) * n
+    if p == 1.0:
+        return (0.0,) * n + (1.0,)
+
+    mode = min(n, int(math.floor((n + 1) * p)))
+    log_mode = (
+        math.lgamma(n + 1)
+        - math.lgamma(mode + 1)
+        - math.lgamma(n - mode + 1)
+        + mode * math.log(p)
+        + (n - mode) * math.log1p(-p)
+    )
+
+    probabilities = [0.0] * (n + 1)
+    probabilities[mode] = math.exp(log_mode)
+
+    odds = p / (1.0 - p)
+    for k in range(mode, n):
+        probabilities[k + 1] = (
+            probabilities[k]
+            * (n - k)
+            / (k + 1)
+            * odds
+        )
+
+    inverse_odds = (1.0 - p) / p
+    for k in range(mode, 0, -1):
+        probabilities[k - 1] = (
+            probabilities[k]
+            * k
+            / (n - k + 1)
+            * inverse_odds
+        )
+
+    total = math.fsum(probabilities)
+    if not math.isfinite(total) or total <= 0.0:
+        raise ArithmeticError("failed to construct stable binomial distribution")
+    return tuple(value / total for value in probabilities)
+
+
 def _binomial_pmf(k: int, n: int, p: float) -> float:
-    return math.comb(n, k) * (p ** k) * ((1.0 - p) ** (n - k))
+    if not 0 <= k <= n:
+        raise ValueError("k must satisfy 0 <= k <= n")
+    return _binomial_distribution(n, p)[k]
 
 
-def _binomial_upper_tail(k: int, n: int, p: float) -> float:
-    return sum(_binomial_pmf(j, n, p) for j in range(k, n + 1))
+def binomial_upper_tail(k: int, n: int, p: float) -> float:
+    if not 0 <= k <= n:
+        raise ValueError("k must satisfy 0 <= k <= n")
+    return math.fsum(_binomial_distribution(n, p)[k:])
 
 
 @lru_cache(maxsize=None)
 def _critical_c1_only(discordant: int, alpha: float) -> int | None:
-    for c1_only in range(discordant + 1):
-        if _binomial_upper_tail(c1_only, discordant, 0.5) <= alpha:
-            return c1_only
-    return None
+    if discordant < 0:
+        raise ValueError("discordant must be nonnegative")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be between 0 and 1")
+
+    probabilities = _binomial_distribution(discordant, 0.5)
+    tail = 0.0
+    critical: int | None = None
+    for c1_only in range(discordant, -1, -1):
+        tail += probabilities[c1_only]
+        if tail <= alpha:
+            critical = c1_only
+        else:
+            break
+    return critical
 
 
 @lru_cache(maxsize=None)
@@ -43,7 +106,7 @@ def _conditional_rejection_probability(
     critical = _critical_c1_only(discordant, alpha)
     if critical is None:
         return 0.0
-    return _binomial_upper_tail(
+    return binomial_upper_tail(
         critical,
         discordant,
         conditional_c1_probability,
@@ -71,20 +134,19 @@ def exact_directional_mcnemar_power(
     discordance_probability = p10 + p01
     conditional_c1_probability = p10 / discordance_probability
 
-    power = 0.0
-    for discordant in range(n_pairs + 1):
-        p_discordant_count = _binomial_pmf(
-            discordant,
-            n_pairs,
-            discordance_probability,
-        )
+    discordant_distribution = _binomial_distribution(
+        n_pairs,
+        discordance_probability,
+    )
+    contributions = []
+    for discordant, p_discordant_count in enumerate(discordant_distribution):
         conditional_rejection = _conditional_rejection_probability(
             discordant,
             conditional_c1_probability=conditional_c1_probability,
             alpha=alpha,
         )
-        power += p_discordant_count * conditional_rejection
-    return power
+        contributions.append(p_discordant_count * conditional_rejection)
+    return math.fsum(contributions)
 
 
 def minimum_pairs_for_power(
