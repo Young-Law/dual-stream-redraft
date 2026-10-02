@@ -278,13 +278,19 @@ python -m experiments.h4c_local_model_development \
   --allow-network \
   --json-out runs/h4c/qwen25-05b-development.json
 
+python -m experiments.h4c_development_gate \
+  runs/h4c/qwen25-05b-development.json \
+  --json-out runs/h4c/qwen25-05b-development-gate.json
+
 python -m experiments.h4c_paired_analysis \
   runs/h4c/qwen25-05b-development.json \
   --json-out runs/h4c/qwen25-05b-development-analysis.json
 ```
 
 The default development seeds are `11,17,23,29`. They are fixed for this development split
-and may be overridden explicitly with `--seeds`. A development rerun after changing prompts
+and may be overridden explicitly with `--seeds`. The development gate renders each
+preregistered go/no-go check as a machine-readable boolean; `--fail-on-no-go` may be used
+when a nonzero process exit is desired for automation. A development rerun after changing prompts
 or evaluator behavior is still development data and must never be relabeled as confirmatory.
 
 Once the go/no-go checks pass and the confirmatory design is final, use
