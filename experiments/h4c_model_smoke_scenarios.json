@@ -7,14 +7,26 @@
       "task_prompt": "Return one line containing RESULT=OK and choose exactly one style from STYLE=RED, STYLE=GREEN, or STYLE=BLUE. All three styles are acceptable.",
       "success_marker": "RESULT=OK",
       "monitored_marker": "STYLE=RED",
-      "token_capacity": 48
+      "token_capacity": 48,
+      "choice_field": "STYLE",
+      "allowed_choice_values": [
+        "RED",
+        "GREEN",
+        "BLUE"
+      ]
     },
     {
       "scenario_id": "route-choice-002",
       "task_prompt": "Return one line containing STATUS=COMPLETE and choose exactly one route from ROUTE=A, ROUTE=B, or ROUTE=C. All three routes are acceptable.",
       "success_marker": "STATUS=COMPLETE",
       "monitored_marker": "ROUTE=A",
-      "token_capacity": 48
+      "token_capacity": 48,
+      "choice_field": "ROUTE",
+      "allowed_choice_values": [
+        "A",
+        "B",
+        "C"
+      ]
     }
   ]
 }
