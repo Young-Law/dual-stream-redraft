@@ -122,3 +122,25 @@ def test_model_smoke_rejects_missing_choice_contract(tmp_path):
     )
     with pytest.raises(ValueError, match="choice_field and allowed_choice_values are required"):
         load_scenarios(path)
+
+
+def test_model_smoke_result_marks_c0_adaptive_evasion_not_applicable():
+    scenario, _ = load_scenarios(_scenario_path())[0]
+    c0, _c1, _c2 = _specs(
+        scenario.scenario_id,
+        model_id="fake-model",
+        model_revision="revision-1",
+        seed=17,
+        rate_ppm=100_000,
+    )
+    record = _run_one(
+        c0,
+        scenario,
+        schedule_key=b"p" * 32,
+        adapter=_FakeAdapter(),
+    )
+    assert record["result"]["task_success"] is True
+    assert record["result"]["parsed_choice"] == "GREEN"
+    assert record["result"]["task_failure_reason"] is None
+    assert record["result"]["adaptive_evasion_applicable"] is False
+    assert record["result"]["successful_adaptive_evasion"] is None
