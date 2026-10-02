@@ -14,23 +14,19 @@ import json
 import math
 from pathlib import Path
 
+from experiments.h4c_model_in_loop import (
+    TrialSpec,
+    public_replay_context,
+    public_replay_context_digest,
+)
+from experiments.h4c_power import binomial_upper_tail
+
 
 _Z_975 = 1.959963984540054
 
 
 def _is_bool(value: object) -> bool:
     return isinstance(value, bool)
-
-
-def _binomial_upper_tail(k: int, n: int, p: float = 0.5) -> float:
-    if not 0 <= k <= n:
-        raise ValueError("k must satisfy 0 <= k <= n")
-    if not 0.0 <= p <= 1.0:
-        raise ValueError("p must be between 0 and 1")
-    return sum(
-        math.comb(n, j) * (p ** j) * ((1.0 - p) ** (n - j))
-        for j in range(k, n + 1)
-    )
 
 
 def _paired_difference_ci(values: list[int]) -> tuple[float, float]:
@@ -48,11 +44,25 @@ def _paired_difference_ci(values: list[int]) -> tuple[float, float]:
     )
 
 
-def _pair_key(record: dict) -> str:
-    digest = record.get("public_replay_context_digest")
-    if not isinstance(digest, str) or not digest:
+def _validated_spec_and_pair_key(record: dict) -> tuple[TrialSpec, str]:
+    raw_spec = record.get("spec")
+    if not isinstance(raw_spec, dict):
+        raise ValueError("record is missing spec")
+    try:
+        spec = TrialSpec(**raw_spec)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("record contains an invalid TrialSpec") from exc
+
+    serialized_digest = record.get("public_replay_context_digest")
+    if not isinstance(serialized_digest, str) or not serialized_digest:
         raise ValueError("record is missing public_replay_context_digest")
-    return digest
+
+    computed_digest = public_replay_context_digest(spec)
+    if serialized_digest != computed_digest:
+        raise ValueError(
+            "public replay context digest does not match record spec"
+        )
+    return spec, computed_digest
 
 
 def analyze_report(report: dict) -> dict:
@@ -64,17 +74,17 @@ def analyze_report(report: dict) -> dict:
     for record in rows:
         if not isinstance(record, dict):
             raise ValueError("every record must be an object")
-        spec = record.get("spec")
-        if not isinstance(spec, dict):
+        raw_spec = record.get("spec")
+        if not isinstance(raw_spec, dict):
             raise ValueError("record is missing spec")
-        condition = spec.get("condition")
+        condition = raw_spec.get("condition")
         if condition not in {"C1", "C2"}:
             continue
-        key = _pair_key(record)
+        spec, key = _validated_spec_and_pair_key(record)
         bucket = pairs.setdefault(key, {})
         if condition in bucket:
             raise ValueError(f"duplicate {condition} record for pair {key}")
-        bucket[condition] = record
+        bucket[condition] = {"record": record, "spec": spec}
 
     if not pairs:
         raise ValueError("report contains no C1/C2 pairs")
@@ -92,17 +102,26 @@ def analyze_report(report: dict) -> dict:
     family_counts: dict[str, dict[str, int]] = {}
 
     for key, pair in pairs.items():
-        c1 = pair["C1"]
-        c2 = pair["C2"]
-        if c1.get("public_replay_context_digest") != c2.get(
-            "public_replay_context_digest"
-        ):
+        c1_entry = pair["C1"]
+        c2_entry = pair["C2"]
+        c1 = c1_entry["record"]
+        c2 = c2_entry["record"]
+        c1_spec = c1_entry["spec"]
+        c2_spec = c2_entry["spec"]
+
+        if public_replay_context(c1_spec) != public_replay_context(c2_spec):
             raise ValueError(f"public replay context mismatch for pair {key}")
+        if c1.get("scenario_family") != c2.get("scenario_family"):
+            raise ValueError(f"scenario family mismatch for pair {key}")
 
         c1_result = c1.get("result")
         c2_result = c2.get("result")
         if not isinstance(c1_result, dict) or not isinstance(c2_result, dict):
             raise ValueError(f"missing result object for pair {key}")
+        if c1_result.get("spec") != c1.get("spec"):
+            raise ValueError(f"C1 result spec mismatch for pair {key}")
+        if c2_result.get("spec") != c2.get("spec"):
+            raise ValueError(f"C2 result spec mismatch for pair {key}")
 
         c1_saer = c1_result.get("successful_adaptive_evasion")
         c2_saer = c2_result.get("successful_adaptive_evasion")
@@ -150,7 +169,7 @@ def analyze_report(report: dict) -> dict:
     ci_low, ci_high = _paired_difference_ci(differences)
     discordant = c1_only + c2_only
     exact_one_sided_p = (
-        _binomial_upper_tail(c1_only, discordant, 0.5)
+        binomial_upper_tail(c1_only, discordant, 0.5)
         if discordant
         else 1.0
     )
