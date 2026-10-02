@@ -13,6 +13,7 @@ from experiments.h4c_power import (
     exact_directional_mcnemar_power,
     minimum_pairs_for_power,
 )
+from scripts.h4c_freeze_manifest import build_manifest
 
 
 def _scenario_path() -> Path:
@@ -206,3 +207,28 @@ def test_power_planner_rejects_wrong_direction():
             p10=0.05,
             p01=0.10,
         )
+
+
+def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
+    files = {}
+    for name in ("prereg", "scenarios", "evaluator", "runner", "analysis"):
+        path = tmp_path / f"{name}.txt"
+        path.write_text(f"{name}\n", encoding="utf-8")
+        files[name] = path
+
+    manifest = build_manifest(
+        git_commit="0123456789abcdef",
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        model_revision="revision",
+        number_of_pairs=128,
+        preregistration=files["prereg"],
+        scenario_set=files["scenarios"],
+        evaluator=files["evaluator"],
+        runner=files["runner"],
+        analysis=files["analysis"],
+    )
+
+    assert manifest["schema_version"] == "h4c-design-freeze-v1"
+    assert manifest["number_of_confirmatory_pairs"] == 128
+    assert manifest["protected_key_in_manifest"] is False
+    assert len(manifest["files"]["scenario_set"]["sha256"]) == 64
