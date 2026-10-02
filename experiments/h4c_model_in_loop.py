@@ -318,7 +318,7 @@ def parse_choice_contract(
         return None, "invalid_choice_contract"
 
     pattern = re.compile(
-        rf"(?<![A-Za-z0-9_]){re.escape(normalized_field)}\\s*=\\s*"
+        rf"(?<![A-Za-z0-9_]){re.escape(normalized_field)}\s*=\s*"
         r"([A-Za-z0-9_-]+)(?![A-Za-z0-9_])",
         flags=re.IGNORECASE,
     )
@@ -352,6 +352,7 @@ def choice_contract_satisfied(
         allowed_values=allowed_values,
     )
     return failure is None
+
 
 def evaluate_response(
     spec: TrialSpec,
