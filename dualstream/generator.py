@@ -155,7 +155,10 @@ class DualStreamGenerator:
         Callers must pass raw user content, never a pre-rendered chat transcript.
         Plain causal models such as GPT-2 receive the raw prompt unchanged.
         """
-        if self.prompt_format != "chat-template-v1":
+        prompt_format = getattr(self, "prompt_format", None)
+        if prompt_format is None:
+            prompt_format = self._detect_prompt_format()
+        if prompt_format != "chat-template-v1":
             return prompt
 
         try:
