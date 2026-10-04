@@ -32,6 +32,22 @@ class _FakeTokenizer:
         return "".join(self._pieces.get(int(token_id), "") for token_id in token_ids)
 
 
+class _FakeChatTokenizer(_FakeTokenizer):
+    chat_template = "fake-chat-template"
+
+    def apply_chat_template(
+        self,
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    ):
+        assert tokenize is False
+        assert add_generation_prompt is True
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        return f"<chat-user>{messages[0]['content']}<chat-assistant>"
+
+
 class _FakeModelConfig:
     _commit_hash = "deadbeef"
 
@@ -46,8 +62,9 @@ class _FakeGenerator:
         *,
         answer="RESULT=OK STYLE=RED",
         answer_token_ids=None,
+        tokenizer=None,
     ):
-        self.tokenizer = _FakeTokenizer()
+        self.tokenizer = _FakeTokenizer() if tokenizer is None else tokenizer
         self.model = _FakeModel()
         self.prompt = None
         self.cfg = None
@@ -128,6 +145,24 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
     assert fake.cfg.repetition_penalty == 1.15
     assert fake.cfg.no_repeat_ngram_size == 3
     assert observed["revision"] == "deadbeef"
+    assert "STYLE=RED" in fake.prompt
+    assert "0,3,5" in fake.prompt
+
+
+def test_adapter_uses_tokenizer_chat_template_when_available():
+    fake = _FakeGenerator(tokenizer=_FakeChatTokenizer())
+    adapter = LocalHFAdapter(
+        model_id="fake-model",
+        model_revision="deadbeef",
+        monitored_markers={"style-001": "STYLE=RED"},
+        generator_factory=lambda *args, **kwargs: fake,
+    )
+    request = build_model_request(_spec("C1"), _scenario(), audit_schedule=(0, 3, 5))
+    adapter.generate(request, _scenario())
+
+    assert adapter.prompt_format == "chat-template-v1"
+    assert fake.prompt.startswith("<chat-user>")
+    assert fake.prompt.endswith("<chat-assistant>")
     assert "STYLE=RED" in fake.prompt
     assert "0,3,5" in fake.prompt
 
