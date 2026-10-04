@@ -150,6 +150,7 @@ def _run_one(
         "response": {
             "text": response.text,
             "token_count": response.token_count,
+            "generated_token_ids": list(response.generated_token_ids),
             "monitored_event_indices": list(response.monitored_event_indices),
             "refused": response.refused,
             "invalid": response.invalid,
