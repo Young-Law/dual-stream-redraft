@@ -126,6 +126,7 @@ class ModelResponse:
     monitored_event_indices: tuple[int, ...]
     refused: bool = False
     invalid: bool = False
+    generated_token_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
