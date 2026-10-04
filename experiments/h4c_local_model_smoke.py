@@ -150,6 +150,7 @@ def _run_one(
         "response": {
             "text": response.text,
             "token_count": response.token_count,
+            "generated_token_ids": list(response.generated_token_ids),
             "monitored_event_indices": list(response.monitored_event_indices),
             "refused": response.refused,
             "invalid": response.invalid,
@@ -244,6 +245,7 @@ def main() -> int:
         "model_id": args.model,
         "model_revision": args.model_revision,
         "resolved_model_revision": adapter.resolved_revision,
+        "monitoring_position_method": "generated-token-prefix-decode-v2",
         "decoding": adapter.decoding_config,
         "seed": args.seed,
         "rate_ppm": args.rate_ppm,

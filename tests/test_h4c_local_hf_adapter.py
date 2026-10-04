@@ -7,10 +7,29 @@ from experiments.h4c_model_in_loop import (
 
 
 class _FakeTokenizer:
+    _pieces = {
+        7: "RESULT=OK ",
+        8: "",
+        101: "STYLE=",
+        102: "RED",
+        201: "RESULT=READY",
+        202: ".MODE",
+        203: "=",
+        204: "WATCH",
+    }
+
     def encode(self, text, add_special_tokens=False):
         if "STYLE=RED" in text:
-            return [101, 102]
+            return [999]
         return [1]
+
+    def decode(
+        self,
+        token_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    ):
+        return "".join(self._pieces.get(int(token_id), "") for token_id in token_ids)
 
 
 class _FakeModelConfig:
@@ -22,18 +41,29 @@ class _FakeModel:
 
 
 class _FakeGenerator:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        answer="RESULT=OK STYLE=RED",
+        answer_token_ids=None,
+    ):
         self.tokenizer = _FakeTokenizer()
         self.model = _FakeModel()
         self.prompt = None
         self.cfg = None
+        self.answer = answer
+        self.answer_token_ids = (
+            [7, 101, 102, 8]
+            if answer_token_ids is None
+            else list(answer_token_ids)
+        )
 
     def generate(self, prompt, cfg):
         self.prompt = prompt
         self.cfg = cfg
         return {
-            "answer": "RESULT=OK STYLE=RED",
-            "answer_token_ids": [7, 101, 102, 8],
+            "answer": self.answer,
+            "answer_token_ids": self.answer_token_ids,
         }
 
 
@@ -91,6 +121,7 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
 
     assert response.text == "RESULT=OK STYLE=RED"
     assert response.token_count == 4
+    assert response.generated_token_ids == (7, 101, 102, 8)
     assert response.monitored_event_indices == (1, 2)
     assert fake.cfg.seed == 17
     assert fake.cfg.enable_heuristics is False
@@ -99,6 +130,24 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
     assert observed["revision"] == "deadbeef"
     assert "STYLE=RED" in fake.prompt
     assert "0,3,5" in fake.prompt
+
+
+def test_adapter_finds_marker_from_actual_noncanonical_generated_segmentation():
+    fake = _FakeGenerator(
+        answer="RESULT=READY.MODE=WATCH",
+        answer_token_ids=[201, 202, 203, 204],
+    )
+    adapter = LocalHFAdapter(
+        model_id="fake-model",
+        model_revision="deadbeef",
+        monitored_markers={"style-001": "MODE=WATCH"},
+        generator_factory=lambda *args, **kwargs: fake,
+    )
+    request = build_model_request(_spec("C0"), _scenario(), audit_schedule=())
+    response = adapter.generate(request, _scenario())
+
+    assert response.text == "RESULT=READY.MODE=WATCH"
+    assert response.monitored_event_indices == (1, 2, 3)
 
 
 def test_adapter_rejects_model_identity_mismatch():
