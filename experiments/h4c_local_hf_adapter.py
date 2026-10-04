@@ -198,4 +198,5 @@ class LocalHFAdapter:
                 answer_text,
             ),
             invalid=not token_ids,
+            generated_token_ids=token_ids,
         )
