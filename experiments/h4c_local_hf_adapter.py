@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from dualstream.generator import DualStreamGenerator, GenerationConfig
-from experiments.h4c_model_in_loop import ModelRequest, ModelResponse, ScenarioFixture
+from experiments.h4c_model_in_loop import (
+    ModelRequest,
+    ModelResponse,
+    ScenarioFixture,
+    exact_marker_spans,
+)
 
 
 def _token_positions(
@@ -72,21 +77,71 @@ class LocalHFAdapter:
                 "declared model_revision does not match resolved model commit"
             )
 
+    def _decode_tokens(self, token_ids: tuple[int, ...]) -> str:
+        tokenizer = self.generator.tokenizer
+        try:
+            return str(
+                tokenizer.decode(
+                    list(token_ids),
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+            )
+        except TypeError:
+            return str(tokenizer.decode(list(token_ids), skip_special_tokens=True))
+
     def _marker_positions(
         self,
         token_ids: tuple[int, ...],
         marker: str,
+        answer_text: str,
     ) -> tuple[int, ...]:
+        """Map literal marker spans back to the token ids actually generated.
+
+        Re-tokenizing a marker is not reliable for BPE/SentencePiece models: the same
+        decoded marker can be produced by different token segmentations depending on
+        left context. Prefer prefix decoding of the observed generated ids, and fall
+        back to minimal decoded token windows when prefix text is not stable.
+        """
+        if not token_ids or not exact_marker_spans(answer_text, marker):
+            return ()
+
+        prefixes = [""]
+        prefix_stable = True
+        for end in range(1, len(token_ids) + 1):
+            decoded = self._decode_tokens(token_ids[:end])
+            if not decoded.startswith(prefixes[-1]):
+                prefix_stable = False
+            prefixes.append(decoded)
+
+        full_text = prefixes[-1]
+        spans = exact_marker_spans(full_text, marker)
+        if prefix_stable and spans:
+            hits: set[int] = set()
+            for marker_start, marker_end in spans:
+                for index in range(len(token_ids)):
+                    token_start = len(prefixes[index])
+                    token_end = len(prefixes[index + 1])
+                    if token_end > marker_start and token_start < marker_end:
+                        hits.add(index)
+            if hits:
+                return tuple(sorted(hits))
+
+        candidates: list[tuple[int, int, int]] = []
+        for start in range(len(token_ids)):
+            for end in range(start + 1, len(token_ids) + 1):
+                decoded = self._decode_tokens(token_ids[start:end])
+                if exact_marker_spans(decoded, marker):
+                    candidates.append((end - start, start, end))
+                    break
+        if not candidates:
+            return ()
+
+        minimum_width = min(width for width, _start, _end in candidates)
         hits: set[int] = set()
-        for text in (marker, " " + marker):
-            encoded = tuple(
-                int(x)
-                for x in self.generator.tokenizer.encode(
-                    text,
-                    add_special_tokens=False,
-                )
-            )
-            hits.update(_token_positions(token_ids, encoded))
+        for width, start, end in candidates:
+            if width == minimum_width:
+                hits.update(range(start, end))
         return tuple(sorted(hits))
 
     def generate(
@@ -133,9 +188,14 @@ class LocalHFAdapter:
         )
         generated = self.generator.generate(prompt, cfg)
         token_ids = tuple(int(x) for x in generated["answer_token_ids"])
+        answer_text = str(generated["answer"])
         return ModelResponse(
-            text=str(generated["answer"]),
+            text=answer_text,
             token_count=len(token_ids),
-            monitored_event_indices=self._marker_positions(token_ids, marker),
+            monitored_event_indices=self._marker_positions(
+                token_ids,
+                marker,
+                answer_text,
+            ),
             invalid=not token_ids,
         )
