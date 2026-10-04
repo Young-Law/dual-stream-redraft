@@ -136,21 +136,43 @@ class DualStreamGenerator:
             # Many causal LMs omit PAD; align to EOS for batching safety.
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        self.prompt_format = self._detect_prompt_format()
+
+    def _detect_prompt_format(self) -> str:
+        """Identify whether this tokenizer has a usable native chat template."""
+        return (
+            "chat-template-v1"
+            if getattr(self.tokenizer, "chat_template", None)
+            and callable(getattr(self.tokenizer, "apply_chat_template", None))
+            else "plain-text-v1"
+        )
+
     def _render_prompt(self, prompt: str) -> str:
         """
-        Render the prompt for instruction/chat models when a chat template is available.
-        Falls back to the raw prompt for plain causal LMs such as GPT-2.
+        Render one user turn for instruction/chat models.
+
+        DualStreamGenerator is the single owner of tokenizer chat-template rendering.
+        Callers must pass raw user content, never a pre-rendered chat transcript.
+        Plain causal models such as GPT-2 receive the raw prompt unchanged.
         """
-        if hasattr(self.tokenizer, "apply_chat_template"):
-            try:
-                return self.tokenizer.apply_chat_template(
-                    [{"role": "user", "content": prompt}],
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-            except Exception:
-                pass
-        return prompt
+        prompt_format = getattr(self, "prompt_format", None)
+        if prompt_format is None:
+            prompt_format = self._detect_prompt_format()
+        if prompt_format != "chat-template-v1":
+            return prompt
+
+        try:
+            rendered = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception as exc:
+            raise ValueError("failed to apply tokenizer chat template") from exc
+
+        if not isinstance(rendered, str) or not rendered:
+            raise ValueError("tokenizer chat template produced an empty prompt")
+        return rendered
 
     def _get_stop_token_ids(self) -> set[int]:
         """

@@ -1,3 +1,4 @@
+from dualstream.generator import DualStreamGenerator
 from experiments.h4c_local_hf_adapter import LocalHFAdapter, _token_positions
 from experiments.h4c_model_in_loop import (
     ScenarioFixture,
@@ -32,6 +33,22 @@ class _FakeTokenizer:
         return "".join(self._pieces.get(int(token_id), "") for token_id in token_ids)
 
 
+class _FakeChatTokenizer(_FakeTokenizer):
+    chat_template = "fake-chat-template"
+
+    def apply_chat_template(
+        self,
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    ):
+        assert tokenize is False
+        assert add_generation_prompt is True
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        return f"<chat-user>{messages[0]['content']}<chat-assistant>"
+
+
 class _FakeModelConfig:
     _commit_hash = "deadbeef"
 
@@ -46,9 +63,17 @@ class _FakeGenerator:
         *,
         answer="RESULT=OK STYLE=RED",
         answer_token_ids=None,
+        tokenizer=None,
     ):
-        self.tokenizer = _FakeTokenizer()
+        self.tokenizer = _FakeTokenizer() if tokenizer is None else tokenizer
         self.model = _FakeModel()
+        self.prompt_format = (
+            "chat-template-v1"
+            if getattr(self.tokenizer, "chat_template", None)
+            and callable(getattr(self.tokenizer, "apply_chat_template", None))
+            else "plain-text-v1"
+        )
+        self.raw_prompt = None
         self.prompt = None
         self.cfg = None
         self.answer = answer
@@ -59,6 +84,13 @@ class _FakeGenerator:
         )
 
     def generate(self, prompt, cfg):
+        self.raw_prompt = prompt
+        if self.prompt_format == "chat-template-v1":
+            prompt = self.tokenizer.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
         self.prompt = prompt
         self.cfg = cfg
         return {
@@ -130,6 +162,47 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
     assert observed["revision"] == "deadbeef"
     assert "STYLE=RED" in fake.prompt
     assert "0,3,5" in fake.prompt
+
+
+def test_adapter_uses_tokenizer_chat_template_when_available():
+    fake = _FakeGenerator(tokenizer=_FakeChatTokenizer())
+    adapter = LocalHFAdapter(
+        model_id="fake-model",
+        model_revision="deadbeef",
+        monitored_markers={"style-001": "STYLE=RED"},
+        generator_factory=lambda *args, **kwargs: fake,
+    )
+    request = build_model_request(_spec("C1"), _scenario(), audit_schedule=(0, 3, 5))
+    adapter.generate(request, _scenario())
+
+    assert adapter.prompt_format == "chat-template-v1"
+    assert not fake.raw_prompt.startswith("<chat-user>")
+    assert fake.prompt.startswith("<chat-user>")
+    assert fake.prompt.endswith("<chat-assistant>")
+    assert fake.prompt.count("<chat-user>") == 1
+    assert fake.prompt.count("<chat-assistant>") == 1
+    assert "STYLE=RED" in fake.prompt
+    assert "0,3,5" in fake.prompt
+
+
+def test_generator_owns_chat_template_rendering_exactly_once():
+    generator = DualStreamGenerator.__new__(DualStreamGenerator)
+    generator.tokenizer = _FakeChatTokenizer()
+    generator.prompt_format = generator._detect_prompt_format()
+
+    rendered = generator._render_prompt("raw task content")
+
+    assert generator.prompt_format == "chat-template-v1"
+    assert rendered == "<chat-user>raw task content<chat-assistant>"
+
+
+def test_generator_leaves_plain_causal_prompt_unwrapped():
+    generator = DualStreamGenerator.__new__(DualStreamGenerator)
+    generator.tokenizer = _FakeTokenizer()
+    generator.prompt_format = generator._detect_prompt_format()
+
+    assert generator.prompt_format == "plain-text-v1"
+    assert generator._render_prompt("raw task content") == "raw task content"
 
 
 def test_adapter_finds_marker_from_actual_noncanonical_generated_segmentation():

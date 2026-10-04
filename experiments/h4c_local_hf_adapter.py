@@ -77,6 +77,12 @@ class LocalHFAdapter:
                 "declared model_revision does not match resolved model commit"
             )
 
+        self.prompt_format = getattr(
+            self.generator,
+            "prompt_format",
+            "plain-text-v1",
+        )
+
     def _decode_tokens(self, token_ids: tuple[int, ...]) -> str:
         tokenizer = self.generator.tokenizer
         try:

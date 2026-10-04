@@ -181,6 +181,7 @@ def main() -> int:
         "model_revision": args.model_revision,
         "resolved_model_revision": adapter.resolved_revision,
         "monitoring_position_method": "generated-token-prefix-decode-v2",
+        "prompt_format": adapter.prompt_format,
         "decoding": adapter.decoding_config,
         "seeds": list(seeds),
         "rate_ppm": args.rate_ppm,
