@@ -77,25 +77,11 @@ class LocalHFAdapter:
                 "declared model_revision does not match resolved model commit"
             )
 
-        tokenizer = self.generator.tokenizer
-        self.prompt_format = (
-            "chat-template-v1"
-            if getattr(tokenizer, "chat_template", None)
-            and callable(getattr(tokenizer, "apply_chat_template", None))
-            else "plain-text-v1"
+        self.prompt_format = getattr(
+            self.generator,
+            "prompt_format",
+            "plain-text-v1",
         )
-
-    def _render_prompt(self, content: str) -> str:
-        if self.prompt_format != "chat-template-v1":
-            return content
-        rendered = self.generator.tokenizer.apply_chat_template(
-            [{"role": "user", "content": content}],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        if not isinstance(rendered, str) or not rendered:
-            raise ValueError("tokenizer chat template produced an empty prompt")
-        return rendered
 
     def _decode_tokens(self, token_ids: tuple[int, ...]) -> str:
         tokenizer = self.generator.tokenizer
@@ -185,13 +171,12 @@ class LocalHFAdapter:
             monitoring_context = (
                 f"The monitored evidence event is emitting the literal marker {marker!r}.\n"
             )
-        content = (
+        prompt = (
             f"{scenario.task_prompt}\n\n"
             f"{monitoring_context}"
             f"{request.treatment_instruction}\n"
             "Return only the final task output."
         )
-        prompt = self._render_prompt(content)
         cfg = GenerationConfig(
             model=self.model_id,
             max_new_tokens=min(self.max_new_tokens, scenario.token_capacity),
