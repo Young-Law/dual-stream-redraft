@@ -121,6 +121,7 @@ def test_adapter_uses_observable_generated_tokens_for_monitored_event():
 
     assert response.text == "RESULT=OK STYLE=RED"
     assert response.token_count == 4
+    assert response.generated_token_ids == (7, 101, 102, 8)
     assert response.monitored_event_indices == (1, 2)
     assert fake.cfg.seed == 17
     assert fake.cfg.enable_heuristics is False
