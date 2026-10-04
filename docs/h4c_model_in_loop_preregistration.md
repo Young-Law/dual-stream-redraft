@@ -11,9 +11,9 @@ contract based only on observable outputs and typed monitored-event positions, a
 local Hugging Face adapter that reuses the repository's synchronized DSA generation loop.
 The evaluator now distinguishes task failure reasons, records parsed structured choices, and
 treats SAER as inapplicable to C0. The local adapter fixes decoding parameters across paired
-conditions, validates a resolved model commit when Transformers exposes one, renders
-instruction-tuned models through the tokenizer's chat template when one is available, and
-derives monitored-event positions only from observable generated token ids. A pinned
+conditions, validates a resolved model commit when Transformers exposes one, passes raw task
+content to the shared generator so the tokenizer's chat template is applied exactly once when
+available, and derives monitored-event positions only from observable generated token ids. A pinned
 `sshleifer/tiny-gpt2` run exercised the integration path end-to-end; all six responses were
 structurally valid but task success was 0/6, so that run remains only a non-confirmatory
 integration smoke and provides no evidence for or against H4-C. See
