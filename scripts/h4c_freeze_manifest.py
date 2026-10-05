@@ -1,9 +1,7 @@
-"""Create a deterministic H4-C design-freeze manifest.
+"""Create and validate a fail-closed H4-C design-freeze manifest.
 
-Run this only after the preregistration, confirmatory scenario set, runner, evaluator,
-analysis code, model revision, audit rate, treatment version, and sample-size planning
-decision are final. The manifest contains hashes and identifiers only; it never contains
-the protected audit key.
+The manifest binds every behavior-affecting H4-C input that must remain fixed before
+confirmatory data collection. Protected audit-key material is never accepted.
 """
 from __future__ import annotations
 
@@ -12,9 +10,176 @@ import hashlib
 import json
 from pathlib import Path
 
+MANIFEST_SCHEMA = "h4c-design-freeze-v3"
+RUNTIME_SCHEMA = "h4c-confirmatory-runtime-v1"
+SCENARIO_SCHEMA = "h4c-model-confirmatory-v1"
+
+_REQUIRED_FILE_ROLES = {
+    "preregistration",
+    "scenario_set",
+    "runtime_config",
+    "evaluator",
+    "adapter",
+    "runner",
+    "analysis",
+    "generator_runtime",
+    "schedule_implementation",
+    "freeze_validator",
+}
+_FORBIDDEN_RUNTIME_KEYS = {
+    "protected_key",
+    "protected_key_hex",
+    "secret_key",
+    "secret_key_hex",
+    "h4c_protected_key_hex",
+}
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_json_object(path: Path, *, label: str) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid JSON: {path}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
+
+
+def _contains_forbidden_key(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).casefold() in _FORBIDDEN_RUNTIME_KEYS:
+                return True
+            if _contains_forbidden_key(child):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_forbidden_key(item) for item in value)
+    return False
+
+
+def validate_runtime_config(data: dict) -> dict:
+    if data.get("schema_version") != RUNTIME_SCHEMA:
+        raise ValueError("unsupported H4-C confirmatory runtime schema")
+    if _contains_forbidden_key(data):
+        raise ValueError("runtime config must not contain protected key material")
+
+    treatment = str(data.get("treatment_version", "")).strip()
+    if not treatment:
+        raise ValueError("runtime treatment_version must be nonempty")
+
+    seeds = data.get("seeds")
+    if (
+        not isinstance(seeds, list)
+        or not seeds
+        or any(type(seed) is not int for seed in seeds)
+        or len(set(seeds)) != len(seeds)
+    ):
+        raise ValueError("runtime seeds must be a nonempty unique integer list")
+
+    rate = data.get("audit_rate_ppm")
+    if type(rate) is not int or not 0 < rate < 1_000_000:
+        raise ValueError("runtime audit_rate_ppm must be between 1 and 999999")
+
+    key_id = data.get("audit_key_id")
+    if type(key_id) is not int or key_id < 0:
+        raise ValueError("runtime audit_key_id must be a nonnegative integer")
+
+    for field in ("policy_version", "benchmark_id", "profile_id"):
+        if not str(data.get(field, "")).strip():
+            raise ValueError(f"runtime {field} must be nonempty")
+
+    decoding = data.get("decoding")
+    required_decoding = {
+        "max_new_tokens",
+        "top_k",
+        "temperature",
+        "top_p",
+        "do_sample",
+        "repetition_penalty",
+        "no_repeat_ngram_size",
+    }
+    if not isinstance(decoding, dict) or set(decoding) != required_decoding:
+        raise ValueError("runtime decoding fields do not match frozen schema")
+    if type(decoding["max_new_tokens"]) is not int or decoding["max_new_tokens"] < 1:
+        raise ValueError("runtime max_new_tokens must be positive")
+    if type(decoding["top_k"]) is not int or decoding["top_k"] < 1:
+        raise ValueError("runtime top_k must be positive")
+    if (
+        not isinstance(decoding["temperature"], (int, float))
+        or isinstance(decoding["temperature"], bool)
+        or decoding["temperature"] <= 0
+    ):
+        raise ValueError("runtime temperature must be positive")
+    if (
+        not isinstance(decoding["top_p"], (int, float))
+        or isinstance(decoding["top_p"], bool)
+        or not 0 < decoding["top_p"] <= 1
+    ):
+        raise ValueError("runtime top_p must be in (0, 1]")
+    if type(decoding["do_sample"]) is not bool:
+        raise ValueError("runtime do_sample must be boolean")
+    if (
+        not isinstance(decoding["repetition_penalty"], (int, float))
+        or isinstance(decoding["repetition_penalty"], bool)
+        or decoding["repetition_penalty"] <= 0
+    ):
+        raise ValueError("runtime repetition_penalty must be positive")
+    if (
+        type(decoding["no_repeat_ngram_size"]) is not int
+        or decoding["no_repeat_ngram_size"] < 0
+    ):
+        raise ValueError("runtime no_repeat_ngram_size must be nonnegative")
+
+    device = data.get("device")
+    if device is not None and (not isinstance(device, str) or not device.strip()):
+        raise ValueError("runtime device must be a nonempty string or null")
+
+    environment = data.get("environment")
+    if not isinstance(environment, dict):
+        raise ValueError("runtime environment must be an object")
+    for field in ("python_version", "platform_system", "platform_machine"):
+        if not str(environment.get(field, "")).strip():
+            raise ValueError(f"runtime environment.{field} must be nonempty")
+    packages = environment.get("packages")
+    if not isinstance(packages, dict):
+        raise ValueError("runtime environment.packages must be an object")
+    for required in ("torch", "transformers", "tokenizers"):
+        if not str(packages.get(required, "")).strip():
+            raise ValueError(
+                f"runtime environment.packages.{required} must be pinned"
+            )
+    return data
+
+
+def _resolve_repo_file(repo_root: Path, path: Path, *, label: str) -> Path:
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"{label} path must be repository-relative")
+    resolved = repo_root / path
+    if not resolved.is_file():
+        raise ValueError(f"{label} file does not exist: {path}")
+    return resolved
+
+
+def _scenario_count(path: Path) -> int:
+    data = _load_json_object(path, label="scenario_set")
+    if data.get("schema_version") != SCENARIO_SCHEMA:
+        raise ValueError("unsupported H4-C confirmatory scenario schema")
+    scope = str(data.get("scope", ""))
+    if "confirmatory" not in scope.casefold():
+        raise ValueError("confirmatory scenario scope must be explicit")
+    rows = data.get("scenarios")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("confirmatory scenario set must be nonempty")
+    ids = [str(row.get("scenario_id", "")).strip() for row in rows if isinstance(row, dict)]
+    if len(ids) != len(rows) or any(not scenario_id for scenario_id in ids):
+        raise ValueError("every confirmatory scenario must have a scenario_id")
+    if len(set(ids)) != len(ids):
+        raise ValueError("confirmatory scenario ids must be unique")
+    return len(rows)
 
 
 def build_manifest(
@@ -22,8 +187,6 @@ def build_manifest(
     git_commit: str,
     model_id: str,
     model_revision: str,
-    treatment_version: str,
-    audit_rate_ppm: int,
     number_of_pairs: int,
     planning_p10: float,
     planning_p01: float,
@@ -31,18 +194,20 @@ def build_manifest(
     target_power: float,
     preregistration: Path,
     scenario_set: Path,
+    runtime_config: Path,
     evaluator: Path,
+    adapter: Path,
     runner: Path,
     analysis: Path,
+    generator_runtime: Path,
+    schedule_implementation: Path,
+    freeze_validator: Path,
+    repo_root: Path = Path("."),
 ) -> dict:
     if len(git_commit.strip()) < 7:
         raise ValueError("git_commit must identify the frozen repository revision")
     if not model_id.strip() or not model_revision.strip():
         raise ValueError("model_id and model_revision must be nonempty")
-    if not treatment_version.strip():
-        raise ValueError("treatment_version must be nonempty")
-    if not 0 < audit_rate_ppm < 1_000_000:
-        raise ValueError("audit_rate_ppm must be between 1 and 999999")
     if number_of_pairs < 1:
         raise ValueError("number_of_pairs must be positive")
     if not 0.0 <= planning_p01 < planning_p10 <= 1.0:
@@ -54,25 +219,44 @@ def build_manifest(
     if not 0.0 < target_power < 1.0:
         raise ValueError("target_power must be between 0 and 1")
 
-    files = {
+    file_paths = {
         "preregistration": preregistration,
         "scenario_set": scenario_set,
+        "runtime_config": runtime_config,
         "evaluator": evaluator,
+        "adapter": adapter,
         "runner": runner,
         "analysis": analysis,
+        "generator_runtime": generator_runtime,
+        "schedule_implementation": schedule_implementation,
+        "freeze_validator": freeze_validator,
     }
-    for name, path in files.items():
-        if not path.is_file():
-            raise ValueError(f"{name} file does not exist: {path}")
+    resolved = {
+        name: _resolve_repo_file(repo_root, path, label=name)
+        for name, path in file_paths.items()
+    }
+
+    runtime = validate_runtime_config(
+        _load_json_object(resolved["runtime_config"], label="runtime_config")
+    )
+    scenarios = _scenario_count(resolved["scenario_set"])
+    derived_pairs = scenarios * len(runtime["seeds"])
+    if derived_pairs != number_of_pairs:
+        raise ValueError(
+            "number_of_pairs must equal confirmatory scenarios x frozen seeds"
+        )
 
     return {
-        "schema_version": "h4c-design-freeze-v2",
+        "schema_version": MANIFEST_SCHEMA,
         "status": "frozen-before-confirmatory-data",
         "git_commit": git_commit.strip(),
         "model_id": model_id.strip(),
         "model_revision": model_revision.strip(),
-        "treatment_version": treatment_version.strip(),
-        "audit_rate_ppm": audit_rate_ppm,
+        "treatment_version": runtime["treatment_version"],
+        "audit_rate_ppm": runtime["audit_rate_ppm"],
+        "confirmatory_seeds": list(runtime["seeds"]),
+        "scenario_schema": SCENARIO_SCHEMA,
+        "runtime_schema": RUNTIME_SCHEMA,
         "number_of_confirmatory_pairs": number_of_pairs,
         "sample_size_planning": {
             "alternative": "C1 SAER > C2 SAER",
@@ -81,15 +265,75 @@ def build_manifest(
             "alpha_one_sided": alpha_one_sided,
             "target_power": target_power,
         },
+        "runtime": runtime,
         "files": {
             name: {
                 "path": path.as_posix(),
-                "sha256": _sha256(path),
+                "sha256": _sha256(resolved[name]),
             }
-            for name, path in files.items()
+            for name, path in file_paths.items()
         },
         "protected_key_in_manifest": False,
     }
+
+
+def validate_frozen_manifest(
+    manifest_path: Path,
+    *,
+    repo_root: Path = Path("."),
+) -> dict:
+    manifest = _load_json_object(manifest_path, label="design_freeze_manifest")
+    if manifest.get("schema_version") != MANIFEST_SCHEMA:
+        raise ValueError("unsupported H4-C design-freeze manifest schema")
+    if manifest.get("status") != "frozen-before-confirmatory-data":
+        raise ValueError("manifest is not in frozen-before-confirmatory-data state")
+    if manifest.get("protected_key_in_manifest") is not False:
+        raise ValueError("manifest must explicitly exclude protected key material")
+    if _contains_forbidden_key(manifest):
+        raise ValueError("manifest contains a forbidden protected-key field")
+
+    files = manifest.get("files")
+    if not isinstance(files, dict) or set(files) != _REQUIRED_FILE_ROLES:
+        raise ValueError("manifest file roles do not match frozen schema")
+
+    for role, entry in files.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"manifest file entry is invalid: {role}")
+        path_value = entry.get("path")
+        expected = entry.get("sha256")
+        if not isinstance(path_value, str) or not isinstance(expected, str):
+            raise ValueError(f"manifest file entry is incomplete: {role}")
+        path = Path(path_value)
+        resolved = _resolve_repo_file(repo_root, path, label=role)
+        actual = _sha256(resolved)
+        if actual != expected:
+            raise ValueError(f"frozen file hash mismatch: {role}")
+
+    runtime_path = repo_root / Path(files["runtime_config"]["path"])
+    runtime = validate_runtime_config(
+        _load_json_object(runtime_path, label="runtime_config")
+    )
+    if runtime != manifest.get("runtime"):
+        raise ValueError("runtime config does not match manifest-bound runtime")
+    if manifest.get("treatment_version") != runtime["treatment_version"]:
+        raise ValueError("manifest treatment_version mismatch")
+    if manifest.get("audit_rate_ppm") != runtime["audit_rate_ppm"]:
+        raise ValueError("manifest audit_rate_ppm mismatch")
+    if manifest.get("confirmatory_seeds") != runtime["seeds"]:
+        raise ValueError("manifest seed list mismatch")
+
+    scenario_path = repo_root / Path(files["scenario_set"]["path"])
+    scenario_count = _scenario_count(scenario_path)
+    expected_pairs = scenario_count * len(runtime["seeds"])
+    if manifest.get("number_of_confirmatory_pairs") != expected_pairs:
+        raise ValueError("manifest pair count no longer matches frozen design")
+
+    planning = manifest.get("sample_size_planning")
+    if not isinstance(planning, dict):
+        raise ValueError("manifest sample-size planning is missing")
+    if planning.get("alternative") != "C1 SAER > C2 SAER":
+        raise ValueError("manifest primary alternative mismatch")
+    return manifest
 
 
 def main() -> int:
@@ -97,8 +341,6 @@ def main() -> int:
     parser.add_argument("--git-commit", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--model-revision", required=True)
-    parser.add_argument("--treatment-version", required=True)
-    parser.add_argument("--audit-rate-ppm", type=int, required=True)
     parser.add_argument("--number-of-pairs", type=int, required=True)
     parser.add_argument("--planning-p10", type=float, required=True)
     parser.add_argument("--planning-p01", type=float, required=True)
@@ -110,16 +352,41 @@ def main() -> int:
         default=Path("docs/h4c_model_in_loop_preregistration.md"),
     )
     parser.add_argument("--scenario-set", type=Path, required=True)
+    parser.add_argument("--runtime-config", type=Path, required=True)
     parser.add_argument(
         "--evaluator",
         type=Path,
         default=Path("experiments/h4c_model_in_loop.py"),
     )
-    parser.add_argument("--runner", type=Path, required=True)
+    parser.add_argument(
+        "--adapter",
+        type=Path,
+        default=Path("experiments/h4c_local_hf_adapter.py"),
+    )
+    parser.add_argument(
+        "--runner",
+        type=Path,
+        default=Path("experiments/h4c_local_model_confirmatory.py"),
+    )
     parser.add_argument(
         "--analysis",
         type=Path,
         default=Path("experiments/h4c_paired_analysis.py"),
+    )
+    parser.add_argument(
+        "--generator-runtime",
+        type=Path,
+        default=Path("dualstream/generator.py"),
+    )
+    parser.add_argument(
+        "--schedule-implementation",
+        type=Path,
+        default=Path("dualstream/compact_evidence.py"),
+    )
+    parser.add_argument(
+        "--freeze-validator",
+        type=Path,
+        default=Path("scripts/h4c_freeze_manifest.py"),
     )
     parser.add_argument("--json-out", type=Path, required=True)
     args = parser.parse_args()
@@ -129,8 +396,6 @@ def main() -> int:
             git_commit=args.git_commit,
             model_id=args.model,
             model_revision=args.model_revision,
-            treatment_version=args.treatment_version,
-            audit_rate_ppm=args.audit_rate_ppm,
             number_of_pairs=args.number_of_pairs,
             planning_p10=args.planning_p10,
             planning_p01=args.planning_p01,
@@ -138,9 +403,14 @@ def main() -> int:
             target_power=args.target_power,
             preregistration=args.preregistration,
             scenario_set=args.scenario_set,
+            runtime_config=args.runtime_config,
             evaluator=args.evaluator,
+            adapter=args.adapter,
             runner=args.runner,
             analysis=args.analysis,
+            generator_runtime=args.generator_runtime,
+            schedule_implementation=args.schedule_implementation,
+            freeze_validator=args.freeze_validator,
         )
     except ValueError as exc:
         parser.error(str(exc))
