@@ -313,34 +313,99 @@ def test_exact_power_handles_full_default_search_scale():
 
 
 def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
+    scenario_path = tmp_path / "scenarios.json"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "h4c-model-confirmatory-v1",
+                "scope": "Frozen confirmatory H4-C scenario set.",
+                "scenarios": [
+                    {"scenario_id": "confirmatory-001"},
+                    {"scenario_id": "confirmatory-002"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "h4c-confirmatory-runtime-v1",
+                "treatment_version": TREATMENT_VERSION,
+                "seeds": [11, 17],
+                "audit_rate_ppm": 500_000,
+                "audit_key_id": 7,
+                "policy_version": "v2.10.1",
+                "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
+                "profile_id": "DSA-CI-Lite",
+                "device": None,
+                "decoding": {
+                    "max_new_tokens": 16,
+                    "top_k": 5,
+                    "temperature": 0.2,
+                    "top_p": 0.95,
+                    "do_sample": True,
+                    "repetition_penalty": 1.0,
+                    "no_repeat_ngram_size": 0,
+                },
+                "environment": {
+                    "python_version": "3.11.16",
+                    "platform_system": "Linux",
+                    "platform_machine": "x86_64",
+                    "packages": {
+                        "torch": "2.0.0",
+                        "transformers": "5.0.0",
+                        "tokenizers": "0.22.0",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     files = {}
-    for name in ("prereg", "scenarios", "evaluator", "runner", "analysis"):
+    for name in (
+        "prereg",
+        "evaluator",
+        "adapter",
+        "runner",
+        "analysis",
+        "generator",
+        "schedule",
+        "validator",
+    ):
         path = tmp_path / f"{name}.txt"
         path.write_text(f"{name}\n", encoding="utf-8")
         files[name] = path
 
     manifest = build_manifest(
         git_commit="0123456789abcdef",
-        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        model_id="Qwen/Qwen2.5-3B-Instruct",
         model_revision="revision",
-        treatment_version=TREATMENT_VERSION,
-        audit_rate_ppm=500_000,
-        number_of_pairs=128,
+        number_of_pairs=4,
         planning_p10=0.225,
         planning_p01=0.075,
         alpha_one_sided=0.05,
         target_power=0.90,
-        preregistration=files["prereg"],
-        scenario_set=files["scenarios"],
-        evaluator=files["evaluator"],
-        runner=files["runner"],
-        analysis=files["analysis"],
+        preregistration=Path("prereg.txt"),
+        scenario_set=Path("scenarios.json"),
+        runtime_config=Path("runtime.json"),
+        evaluator=Path("evaluator.txt"),
+        adapter=Path("adapter.txt"),
+        runner=Path("runner.txt"),
+        analysis=Path("analysis.txt"),
+        generator_runtime=Path("generator.txt"),
+        schedule_implementation=Path("schedule.txt"),
+        freeze_validator=Path("validator.txt"),
+        repo_root=tmp_path,
     )
 
-    assert manifest["schema_version"] == "h4c-design-freeze-v2"
-    assert manifest["number_of_confirmatory_pairs"] == 128
+    assert manifest["schema_version"] == "h4c-design-freeze-v3"
+    assert manifest["number_of_confirmatory_pairs"] == 4
     assert manifest["audit_rate_ppm"] == 500_000
     assert manifest["treatment_version"] == TREATMENT_VERSION
+    assert manifest["confirmatory_seeds"] == [11, 17]
+    assert manifest["runtime"]["decoding"]["temperature"] == 0.2
     assert manifest["sample_size_planning"]["p10_c1_success_c2_failure"] == 0.225
     assert manifest["sample_size_planning"]["p01_c1_failure_c2_success"] == 0.075
     assert manifest["protected_key_in_manifest"] is False
