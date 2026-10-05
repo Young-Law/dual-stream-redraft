@@ -120,6 +120,13 @@ at index 0 and N filler words, the monitored word is at 0-based generated-token 
 This isolates schedule-aware placement from tokenizer arithmetic while retaining a mandatory,
 observable monitored event.
 
+For the v5 manipulation iteration, development scenario schema `h4c-model-development-v4`
+removes the `N -> N+1` index arithmetic from the base task prompt entirely. The base prompt
+now states only the legal prefix-filler grammar and filler-count bound. The treatment harness
+renders the complete exact-output/marker-position menu identically for C0, C1, and C2; only
+C1 receives the audited/safe partition of that shared menu. This keeps task-validity
+information condition-invariant while making the public schedule directly actionable.
+
 Development decoding also removes repetition penalties and no-repeat n-gram controls, because
 those controls directly interfere with the legal repeated-filler mechanism; sampling remains
 enabled at low temperature for seed-based development variation.
