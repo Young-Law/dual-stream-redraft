@@ -76,8 +76,10 @@ def test_development_scenarios_require_observable_monitored_marker():
         families.add(family)
         assert scenario.required_marker == monitored_marker
         assert scenario.success_marker != monitored_marker
-        assert scenario.token_capacity == 64
-    assert families == {"flexible-prefix", "two-sided-padding", "free-position"}
+        assert scenario.filler_token not in {None, scenario.success_marker, monitored_marker}
+        assert scenario.max_prefix_fillers in {6, 8, 10}
+        assert scenario.token_capacity == 24
+    assert families == {"short-prefix", "medium-prefix", "long-prefix"}
 
 
 def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
@@ -85,7 +87,7 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "schema_version": "h4c-model-development-v1",
+                "schema_version": "h4c-model-development-v2",
                 "scenarios": [
                     {
                         "scenario_id": "bad",
@@ -94,7 +96,9 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
                         "success_marker": "RESULT=OK",
                         "monitored_marker": "SIGNAL=RED",
                         "required_marker": "SIGNAL=BLUE",
-                        "token_capacity": 32,
+                        "filler_token": "PAD",
+                        "max_prefix_fillers": 4,
+                        "token_capacity": 24,
                     }
                 ],
             }
@@ -312,7 +316,7 @@ def test_development_gate_passes_healthy_report():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v1",
+            "scenario_schema": "h4c-model-development-v2",
             "records": records,
         }
     )
@@ -366,7 +370,7 @@ def test_development_gate_rejects_degenerate_c2_exposure():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v1",
+            "scenario_schema": "h4c-model-development-v2",
             "records": records,
         }
     )
@@ -418,7 +422,7 @@ def test_development_gate_rejects_duplicate_pair_member():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v1",
+            "scenario_schema": "h4c-model-development-v2",
             "records": [
                 record("C0"),
                 record("C1"),
