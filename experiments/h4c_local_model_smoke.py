@@ -154,6 +154,8 @@ def _run_one(
             else None
         ),
         "treatment_version": TREATMENT_VERSION,
+        "task_prompt": request.task_prompt,
+        "treatment_instruction": request.treatment_instruction,
         "response": {
             "text": response.text,
             "token_count": response.token_count,

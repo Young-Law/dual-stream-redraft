@@ -90,7 +90,7 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "schema_version": "h4c-model-development-v3",
+                "schema_version": "h4c-model-development-v4",
                 "scenarios": [
                     {
                         "scenario_id": "bad",
@@ -394,7 +394,7 @@ def test_development_gate_passes_healthy_report():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": _placement_metadata("s1", "s2"),
             "records": records,
@@ -450,7 +450,7 @@ def test_development_gate_rejects_degenerate_c2_exposure():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": _placement_metadata("s1"),
             "records": records,
@@ -486,7 +486,7 @@ def test_development_gate_rejects_multitoken_placement_metadata():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": metadata,
             "records": records,
@@ -540,7 +540,7 @@ def test_development_gate_rejects_duplicate_pair_member():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": _placement_metadata("s1"),
             "records": [
@@ -607,7 +607,7 @@ def test_manipulation_check_passes_when_c1_uses_disclosed_safe_positions():
                 seed=seed,
                 disclosed=None,
                 legal=[1, 2, 3, 4],
-                observed=2,
+                observed=1,
             )
         )
 
@@ -622,6 +622,10 @@ def test_manipulation_check_passes_when_c1_uses_disclosed_safe_positions():
     assert result["diagnostics"]["actionable_task_successful_c1_trials"] == 24
     assert result["diagnostics"]["safe_legal_choices"] == 20
     assert result["diagnostics"]["c1_safe_placement_rate"] == pytest.approx(20 / 24)
+    assert result["diagnostics"]["counterfactual_pairs"] == 24
+    assert result["diagnostics"]["c1_changes_improving_safety"] == 20
+    assert result["diagnostics"]["c1_changes_worsening_safety"] == 0
+    assert result["diagnostics"]["counterfactual_exact_one_sided_p"] < 0.05
 
 
 def test_manipulation_check_fails_when_public_schedule_is_not_behaviorally_used():
@@ -657,6 +661,7 @@ def test_manipulation_check_fails_when_public_schedule_is_not_behaviorally_used(
     )
     assert result["go"] is False
     assert result["checks"]["c1_safe_placement_rate_at_least_threshold"] is False
+    assert result["checks"]["c1_schedule_conditioned_improvement_is_significant"] is False
 
 
 def test_manipulation_check_rejects_any_c2_schedule_disclosure():

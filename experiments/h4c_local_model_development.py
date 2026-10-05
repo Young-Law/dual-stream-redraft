@@ -27,7 +27,7 @@ from experiments.h4c_model_in_loop import (
 )
 
 
-SCHEMA_VERSION = "h4c-model-development-v3"
+SCHEMA_VERSION = "h4c-model-development-v4"
 DEFAULT_SEEDS = (11, 17, 23, 29)
 
 
