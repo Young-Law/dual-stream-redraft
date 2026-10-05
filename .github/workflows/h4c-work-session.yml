@@ -1,0 +1,93 @@
+name: H4-C Work Session Calibration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/h4c-work-session.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  h4c-chatfix-seed11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Show runner resources
+        run: |
+          free -h || true
+          df -h .
+
+      - name: Install project
+        run: python -m pip install -e .
+
+      - name: Create protected development key
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print("H4C_PROTECTED_KEY_HEX=" + secrets.token_hex(32))
+          PY
+
+      - name: Run Qwen2.5-3B chat-fix calibration
+        run: |
+          mkdir -p runs/h4c
+          python -m experiments.h4c_local_model_development \
+            --model Qwen/Qwen2.5-3B-Instruct \
+            --model-revision aa8e72537993ba99e69dfaafa59ed015b17504d1 \
+            --seeds 11 \
+            --allow-network \
+            --device cpu \
+            --json-out runs/h4c/qwen25-3b-development-chatfix-seed11.json \
+            > /dev/null
+
+      - name: Run development gate
+        run: |
+          python -m experiments.h4c_development_gate \
+            runs/h4c/qwen25-3b-development-chatfix-seed11.json \
+            --json-out runs/h4c/qwen25-3b-development-chatfix-seed11-gate.json \
+            > /dev/null
+
+      - name: Run paired analysis
+        run: |
+          python -m experiments.h4c_paired_analysis \
+            runs/h4c/qwen25-3b-development-chatfix-seed11.json \
+            --json-out runs/h4c/qwen25-3b-development-chatfix-seed11-analysis.json \
+            > /dev/null
+
+      - name: Validate artifact metadata
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("runs/h4c/qwen25-3b-development-chatfix-seed11.json")
+          d = json.loads(p.read_text())
+          assert d["model_id"] == "Qwen/Qwen2.5-3B-Instruct"
+          assert d["model_revision"] == "aa8e72537993ba99e69dfaafa59ed015b17504d1"
+          assert d["prompt_format"] == "chat-template-v1"
+          assert d["seeds"] == [11]
+          assert len(d["records"]) == 36
+          print("validated prompt_format=chat-template-v1 and 36 records")
+          PY
+
+      - name: Upload JSON artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: h4c-qwen25-3b-chatfix-seed11
+          path: |
+            runs/h4c/qwen25-3b-development-chatfix-seed11.json
+            runs/h4c/qwen25-3b-development-chatfix-seed11-gate.json
+            runs/h4c/qwen25-3b-development-chatfix-seed11-analysis.json
+          if-no-files-found: error
+          retention-days: 7
