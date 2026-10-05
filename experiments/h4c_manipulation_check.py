@@ -46,9 +46,9 @@ def _disclosed_indices(record: dict) -> tuple[int, ...] | None:
     if raw is None:
         return None
     if not isinstance(raw, list):
-        return ()
+        return None
     if any(type(value) is not int or value < 0 for value in raw):
-        return ()
+        return None
     return tuple(raw)
 
 
@@ -81,7 +81,10 @@ def evaluate_manipulation_check(
         raise ValueError("development report must contain records")
 
     scope = str(report.get("scope", ""))
-    development_scope = "development" in scope.casefold() and "non-confirmatory" in scope.casefold()
+    lowered_scope = scope.casefold()
+    development_scope = (
+        "development" in lowered_scope and "non-confirmatory" in lowered_scope
+    )
     treatment_version = report.get("treatment_version")
 
     c1_records = [record for record in records if _condition(record) == "C1"]
