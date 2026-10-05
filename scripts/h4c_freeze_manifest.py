@@ -62,6 +62,8 @@ def _contains_forbidden_key(value: object) -> bool:
 
 
 def validate_runtime_config(data: dict) -> dict:
+    if _contains_forbidden_key(data):
+        raise ValueError("runtime config must not contain protected key material")
     expected_fields = {
         "schema_version",
         "treatment_version",
@@ -79,8 +81,6 @@ def validate_runtime_config(data: dict) -> dict:
         raise ValueError("runtime config fields do not match frozen schema")
     if data.get("schema_version") != RUNTIME_SCHEMA:
         raise ValueError("unsupported H4-C confirmatory runtime schema")
-    if _contains_forbidden_key(data):
-        raise ValueError("runtime config must not contain protected key material")
 
     treatment = str(data.get("treatment_version", "")).strip()
     if not treatment:
