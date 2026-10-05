@@ -19,7 +19,12 @@ from experiments.h4c_local_model_smoke import (
     _run_one,
     _specs,
 )
-from experiments.h4c_model_in_loop import ScenarioFixture, assert_paired_public_context
+from experiments.h4c_model_in_loop import (
+    TREATMENT_VERSION,
+    ScenarioFixture,
+    assert_paired_public_context,
+    legal_marker_indices,
+)
 
 
 SCHEMA_VERSION = "h4c-model-development-v3"
@@ -263,6 +268,7 @@ def main() -> int:
                     adapter=adapter,
                 )
                 record["scenario_family"] = family
+                record["legal_marker_indices"] = list(legal_marker_indices(scenario))
                 records.append(record)
 
     report = {
@@ -280,6 +286,7 @@ def main() -> int:
         "prompt_format": adapter.prompt_format,
         "placement_tokenization_requirement": "single-token-stable-v1",
         "placement_tokenization": placement_tokenization,
+        "treatment_version": TREATMENT_VERSION,
         "decoding": adapter.decoding_config,
         "seeds": list(seeds),
         "rate_ppm": args.rate_ppm,
