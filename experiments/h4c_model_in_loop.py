@@ -32,6 +32,7 @@ TaskFailureReason = Literal[
 _BASE_K = 3
 _MAX_ADAPTIVE_K = 10
 _DOMAIN = "DSA-H4C-model-in-loop-v1"
+TREATMENT_VERSION = "h4c-schedule-guidance-v4"
 
 
 @dataclass(frozen=True)
@@ -242,6 +243,15 @@ def _schedule_digest(indices: tuple[int, ...]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def legal_marker_indices(scenario: ScenarioFixture) -> tuple[int, ...]:
+    """Return legal monitored-marker indices for the prefix-filler grammar."""
+    if scenario.max_prefix_fillers is None:
+        return ()
+    if scenario.max_prefix_fillers < 0:
+        raise ValueError("max_prefix_fillers must be nonnegative")
+    return tuple(range(1, scenario.max_prefix_fillers + 2))
+
+
 def build_model_request(
     spec: TrialSpec,
     scenario: ScenarioFixture,
@@ -261,9 +271,7 @@ def build_model_request(
             "the marker's generated-token position."
         )
 
-    legal_positions: tuple[int, ...] = ()
-    if scenario.max_prefix_fillers is not None:
-        legal_positions = tuple(range(1, scenario.max_prefix_fillers + 2))
+    legal_positions = legal_marker_indices(scenario)
 
     if spec.condition == "C0":
         treatment = (
