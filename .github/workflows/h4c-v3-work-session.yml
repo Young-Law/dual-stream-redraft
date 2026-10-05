@@ -1,0 +1,116 @@
+name: H4-C v3 Development Work Session
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/h4c-v3-work-session.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  h4c-v3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: python -m pip install -e .
+
+      - name: Create protected development key
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print("H4C_PROTECTED_KEY_HEX=" + secrets.token_hex(32))
+          PY
+
+      - name: Run seed-11 v3 calibration
+        run: |
+          mkdir -p runs/h4c
+          python -m experiments.h4c_local_model_development \
+            --model Qwen/Qwen2.5-3B-Instruct \
+            --model-revision aa8e72537993ba99e69dfaafa59ed015b17504d1 \
+            --seeds 11 \
+            --allow-network \
+            --device cpu \
+            --max-new-tokens 16 \
+            --json-out runs/h4c/qwen25-3b-development-v3-seed11.json \
+            > /dev/null
+          python -m experiments.h4c_development_gate \
+            runs/h4c/qwen25-3b-development-v3-seed11.json \
+            --json-out runs/h4c/qwen25-3b-development-v3-seed11-gate.json \
+            > /dev/null
+          python -m experiments.h4c_paired_analysis \
+            runs/h4c/qwen25-3b-development-v3-seed11.json \
+            --json-out runs/h4c/qwen25-3b-development-v3-seed11-analysis.json \
+            > /dev/null
+
+      - name: Decide whether to expand
+        id: decide
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          gate=json.load(open("runs/h4c/qwen25-3b-development-v3-seed11-gate.json", encoding="utf-8"))
+          print("go=" + ("true" if gate["go"] else "false"))
+          print("seed11_c0_rate=" + str(gate["diagnostics"]["c0_task_success_rate"]))
+          PY
+
+      - name: Run four-seed v3 development
+        if: steps.decide.outputs.go == 'true'
+        run: |
+          python -m experiments.h4c_local_model_development \
+            --model Qwen/Qwen2.5-3B-Instruct \
+            --model-revision aa8e72537993ba99e69dfaafa59ed015b17504d1 \
+            --seeds 11,17,23,29 \
+            --allow-network \
+            --device cpu \
+            --max-new-tokens 16 \
+            --json-out runs/h4c/qwen25-3b-development-v3-four-seed.json \
+            > /dev/null
+          python -m experiments.h4c_development_gate \
+            runs/h4c/qwen25-3b-development-v3-four-seed.json \
+            --json-out runs/h4c/qwen25-3b-development-v3-four-seed-gate.json \
+            > /dev/null
+          python -m experiments.h4c_paired_analysis \
+            runs/h4c/qwen25-3b-development-v3-four-seed.json \
+            --json-out runs/h4c/qwen25-3b-development-v3-four-seed-analysis.json \
+            > /dev/null
+
+      - name: Summarize results
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for label in ("seed11","four-seed"):
+              gp=Path(f"runs/h4c/qwen25-3b-development-v3-{label}-gate.json")
+              ap=Path(f"runs/h4c/qwen25-3b-development-v3-{label}-analysis.json")
+              if not gp.exists():
+                  continue
+              g=json.loads(gp.read_text())
+              a=json.loads(ap.read_text())
+              print(label, "GO=",g["go"])
+              print(label, "C0=",g["diagnostics"]["c0_task_successes"],"/",g["diagnostics"]["c0_trials"])
+              print(label, "C2 exposed=",g["diagnostics"]["c2_task_successful_audit_exposures"])
+              print(label, "C1 SAER=",a["saer"]["c1_rate"],"C2 SAER=",a["saer"]["c2_rate"],"diff=",a["saer"]["paired_difference_c1_minus_c2"])
+              print(label, "McNemar p=",a["discordant_pairs"]["exact_one_sided_mcnemar_p"])
+          PY
+
+      - name: Upload development JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: h4c-qwen25-3b-v3-development
+          path: runs/h4c/*.json
+          if-no-files-found: error
+          retention-days: 7
