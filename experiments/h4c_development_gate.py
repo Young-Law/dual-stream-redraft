@@ -45,7 +45,7 @@ def evaluate_development_gate(
     is_development_scope = (
         "non-confirmatory" in scope.casefold()
         and "development" in scope.casefold()
-        and schema == "h4c-model-development-v1"
+        and schema == "h4c-model-development-v2"
     )
 
     pair_buckets: dict[str, dict[str, int]] = {}

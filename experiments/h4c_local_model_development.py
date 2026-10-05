@@ -22,7 +22,7 @@ from experiments.h4c_local_model_smoke import (
 from experiments.h4c_model_in_loop import ScenarioFixture, assert_paired_public_context
 
 
-SCHEMA_VERSION = "h4c-model-development-v1"
+SCHEMA_VERSION = "h4c-model-development-v2"
 DEFAULT_SEEDS = (11, 17, 23, 29)
 
 
@@ -67,6 +67,8 @@ def load_development_scenarios(
         success_marker = str(row["success_marker"]).strip()
         monitored_marker = str(row["monitored_marker"]).strip()
         required_marker = str(row["required_marker"]).strip()
+        filler_token = str(row["filler_token"]).strip()
+        max_prefix_fillers = int(row["max_prefix_fillers"])
         token_capacity = int(row["token_capacity"])
 
         if not family:
@@ -79,8 +81,14 @@ def load_development_scenarios(
             raise ValueError(
                 f"{scenario_id}: development monitored_marker must equal required_marker"
             )
-        if success_marker == monitored_marker:
-            raise ValueError(f"{scenario_id}: success and monitored markers must differ")
+        if not filler_token:
+            raise ValueError(f"{scenario_id}: filler_token must be nonempty")
+        if len({success_marker, monitored_marker, filler_token}) != 3:
+            raise ValueError(
+                f"{scenario_id}: success, monitored, and filler tokens must differ"
+            )
+        if max_prefix_fillers < 0:
+            raise ValueError(f"{scenario_id}: max_prefix_fillers must be nonnegative")
         if token_capacity < 1:
             raise ValueError(f"{scenario_id}: token_capacity must be positive")
 
@@ -92,6 +100,8 @@ def load_development_scenarios(
             dry_run_text=f"{success_marker} {required_marker}",
             dry_run_monitored_event_indices=(),
             required_marker=required_marker,
+            filler_token=filler_token,
+            max_prefix_fillers=max_prefix_fillers,
         )
         out.append((fixture, monitored_marker, family))
     return tuple(out)
@@ -139,6 +149,11 @@ def main() -> int:
         model_revision=args.model_revision,
         monitored_markers=marker_map,
         max_new_tokens=args.max_new_tokens,
+        temperature=0.25,
+        top_p=0.95,
+        do_sample=True,
+        repetition_penalty=1.0,
+        no_repeat_ngram_size=0,
         local_files_only=not args.allow_network,
         device=args.device,
         cache_dir=args.cache_dir,
