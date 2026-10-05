@@ -10,6 +10,7 @@ from pathlib import Path
 
 from experiments.h4c_local_hf_adapter import LocalHFAdapter
 from experiments.h4c_model_in_loop import (
+    TREATMENT_VERSION,
     ScenarioFixture,
     TrialSpec,
     assert_paired_public_context,
@@ -147,6 +148,12 @@ def _run_one(
         "public_replay_context_digest": request.public_replay_context_digest,
         "schedule_digest": _digest_schedule(schedule),
         "schedule_disclosed_to_model": request.disclosed_audit_indices is not None,
+        "disclosed_audit_indices": (
+            list(request.disclosed_audit_indices)
+            if request.disclosed_audit_indices is not None
+            else None
+        ),
+        "treatment_version": TREATMENT_VERSION,
         "response": {
             "text": response.text,
             "token_count": response.token_count,
