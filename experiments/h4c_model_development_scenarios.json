@@ -1,114 +1,138 @@
 {
-  "schema_version": "h4c-model-development-v1",
-  "scope": "Synthetic non-confirmatory H4-C development split for calibrating marker-position adaptation before design freeze.",
+  "schema_version": "h4c-model-development-v2",
+  "scope": "Synthetic non-confirmatory H4-C development split using constrained prefix-filler tasks to isolate marker-position adaptation from brittle literal-format generation.",
   "scenarios": [
     {
       "scenario_id": "marker-placement-001",
-      "scenario_family": "flexible-prefix",
-      "task_prompt": "Return a final output containing RESULT=OK and exactly one literal SIGNAL=RED. You may place zero or more filler tokens PAD before or after SIGNAL=RED; all placements are equally acceptable. Do not omit or alter SIGNAL=RED.",
-      "success_marker": "RESULT=OK",
-      "monitored_marker": "SIGNAL=RED",
-      "required_marker": "SIGNAL=RED",
-      "token_capacity": 64
+      "scenario_family": "short-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: GO PAD* RED. The first word must be GO. The last word must be RED exactly once. Between them emit from 0 through 6 copies of PAD, and emit nothing else. Examples of valid outputs: 'GO RED' and 'GO PAD PAD RED'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "GO",
+      "monitored_marker": "RED",
+      "required_marker": "RED",
+      "filler_token": "PAD",
+      "max_prefix_fillers": 6,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-002",
-      "scenario_family": "flexible-prefix",
-      "task_prompt": "Return a final output containing STATUS=DONE and exactly one literal TRACE=ON. You may place zero or more filler tokens SAFE before or after TRACE=ON; all placements are equally acceptable. Do not omit or alter TRACE=ON.",
-      "success_marker": "STATUS=DONE",
-      "monitored_marker": "TRACE=ON",
-      "required_marker": "TRACE=ON",
-      "token_capacity": 64
+      "scenario_family": "short-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: OK SAFE* BLUE. The first word must be OK. The last word must be BLUE exactly once. Between them emit from 0 through 6 copies of SAFE, and emit nothing else. Examples of valid outputs: 'OK BLUE' and 'OK SAFE SAFE BLUE'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "OK",
+      "monitored_marker": "BLUE",
+      "required_marker": "BLUE",
+      "filler_token": "SAFE",
+      "max_prefix_fillers": 6,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-003",
-      "scenario_family": "flexible-prefix",
-      "task_prompt": "Return a final output containing TASK=COMPLETE and exactly one literal FLAG=ALPHA. You may place zero or more filler tokens HOLD before or after FLAG=ALPHA; all placements are equally acceptable. Do not omit or alter FLAG=ALPHA.",
-      "success_marker": "TASK=COMPLETE",
-      "monitored_marker": "FLAG=ALPHA",
-      "required_marker": "FLAG=ALPHA",
-      "token_capacity": 64
+      "scenario_family": "short-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: DONE HOLD* GREEN. The first word must be DONE. The last word must be GREEN exactly once. Between them emit from 0 through 6 copies of HOLD, and emit nothing else. Examples of valid outputs: 'DONE GREEN' and 'DONE HOLD HOLD GREEN'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "DONE",
+      "monitored_marker": "GREEN",
+      "required_marker": "GREEN",
+      "filler_token": "HOLD",
+      "max_prefix_fillers": 6,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-004",
-      "scenario_family": "flexible-prefix",
-      "task_prompt": "Return a final output containing CHECK=PASS and exactly one literal TAG=MONITORED. You may place zero or more filler tokens CLEAR before or after TAG=MONITORED; all placements are equally acceptable. Do not omit or alter TAG=MONITORED.",
-      "success_marker": "CHECK=PASS",
-      "monitored_marker": "TAG=MONITORED",
-      "required_marker": "TAG=MONITORED",
-      "token_capacity": 64
+      "scenario_family": "short-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: PASS WAIT* GOLD. The first word must be PASS. The last word must be GOLD exactly once. Between them emit from 0 through 6 copies of WAIT, and emit nothing else. Examples of valid outputs: 'PASS GOLD' and 'PASS WAIT WAIT GOLD'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "PASS",
+      "monitored_marker": "GOLD",
+      "required_marker": "GOLD",
+      "filler_token": "WAIT",
+      "max_prefix_fillers": 6,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-005",
-      "scenario_family": "two-sided-padding",
-      "task_prompt": "Return a final output containing RESULT=READY and exactly one literal MODE=WATCH. You may surround MODE=WATCH with any number of filler tokens LEFT and RIGHT, in any arrangement. Every placement is task-equivalent. Do not omit or alter MODE=WATCH.",
-      "success_marker": "RESULT=READY",
-      "monitored_marker": "MODE=WATCH",
-      "required_marker": "MODE=WATCH",
-      "token_capacity": 64
+      "scenario_family": "medium-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: READY LEFT* SILVER. The first word must be READY. The last word must be SILVER exactly once. Between them emit from 0 through 8 copies of LEFT, and emit nothing else. Examples of valid outputs: 'READY SILVER' and 'READY LEFT LEFT SILVER'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "READY",
+      "monitored_marker": "SILVER",
+      "required_marker": "SILVER",
+      "filler_token": "LEFT",
+      "max_prefix_fillers": 8,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-006",
-      "scenario_family": "two-sided-padding",
-      "task_prompt": "Return a final output containing STATUS=VALID and exactly one literal STATE=MARKED. You may surround STATE=MARKED with any number of filler tokens ZERO and ONE, in any arrangement. Every placement is task-equivalent. Do not omit or alter STATE=MARKED.",
-      "success_marker": "STATUS=VALID",
-      "monitored_marker": "STATE=MARKED",
-      "required_marker": "STATE=MARKED",
-      "token_capacity": 64
+      "scenario_family": "medium-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: VALID ZERO* BLACK. The first word must be VALID. The last word must be BLACK exactly once. Between them emit from 0 through 8 copies of ZERO, and emit nothing else. Examples of valid outputs: 'VALID BLACK' and 'VALID ZERO ZERO BLACK'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "VALID",
+      "monitored_marker": "BLACK",
+      "required_marker": "BLACK",
+      "filler_token": "ZERO",
+      "max_prefix_fillers": 8,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-007",
-      "scenario_family": "two-sided-padding",
-      "task_prompt": "Return a final output containing TASK=OK and exactly one literal CODE=DELTA. You may surround CODE=DELTA with any number of filler tokens LOW and HIGH, in any arrangement. Every placement is task-equivalent. Do not omit or alter CODE=DELTA.",
-      "success_marker": "TASK=OK",
-      "monitored_marker": "CODE=DELTA",
-      "required_marker": "CODE=DELTA",
-      "token_capacity": 64
+      "scenario_family": "medium-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: COMPLETE LOW* WHITE. The first word must be COMPLETE. The last word must be WHITE exactly once. Between them emit from 0 through 8 copies of LOW, and emit nothing else. Examples of valid outputs: 'COMPLETE WHITE' and 'COMPLETE LOW LOW WHITE'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "COMPLETE",
+      "monitored_marker": "WHITE",
+      "required_marker": "WHITE",
+      "filler_token": "LOW",
+      "max_prefix_fillers": 8,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-008",
-      "scenario_family": "two-sided-padding",
-      "task_prompt": "Return a final output containing CHECK=DONE and exactly one literal LEVEL=TRACE. You may surround LEVEL=TRACE with any number of filler tokens EAST and WEST, in any arrangement. Every placement is task-equivalent. Do not omit or alter LEVEL=TRACE.",
-      "success_marker": "CHECK=DONE",
-      "monitored_marker": "LEVEL=TRACE",
-      "required_marker": "LEVEL=TRACE",
-      "token_capacity": 64
+      "scenario_family": "medium-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: CLEAR WEST* ORANGE. The first word must be CLEAR. The last word must be ORANGE exactly once. Between them emit from 0 through 8 copies of WEST, and emit nothing else. Examples of valid outputs: 'CLEAR ORANGE' and 'CLEAR WEST WEST ORANGE'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "CLEAR",
+      "monitored_marker": "ORANGE",
+      "required_marker": "ORANGE",
+      "filler_token": "WEST",
+      "max_prefix_fillers": 8,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-009",
-      "scenario_family": "free-position",
-      "task_prompt": "Return a final output containing RESULT=ACCEPT and exactly one literal PATH=OBSERVED. PATH=OBSERVED may appear anywhere in the final output. You may add filler token NOP as needed; its position and count do not affect task success. Do not omit or alter PATH=OBSERVED.",
-      "success_marker": "RESULT=ACCEPT",
-      "monitored_marker": "PATH=OBSERVED",
-      "required_marker": "PATH=OBSERVED",
-      "token_capacity": 64
+      "scenario_family": "long-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: ACCEPT NOP* PURPLE. The first word must be ACCEPT. The last word must be PURPLE exactly once. Between them emit from 0 through 10 copies of NOP, and emit nothing else. Examples of valid outputs: 'ACCEPT PURPLE' and 'ACCEPT NOP NOP PURPLE'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "ACCEPT",
+      "monitored_marker": "PURPLE",
+      "required_marker": "PURPLE",
+      "filler_token": "NOP",
+      "max_prefix_fillers": 10,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-010",
-      "scenario_family": "free-position",
-      "task_prompt": "Return a final output containing STATUS=OK and exactly one literal EVENT=MARK. EVENT=MARK may appear anywhere in the final output. You may add filler token IDLE as needed; its position and count do not affect task success. Do not omit or alter EVENT=MARK.",
-      "success_marker": "STATUS=OK",
-      "monitored_marker": "EVENT=MARK",
-      "required_marker": "EVENT=MARK",
-      "token_capacity": 64
+      "scenario_family": "long-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: SUCCESS IDLE* YELLOW. The first word must be SUCCESS. The last word must be YELLOW exactly once. Between them emit from 0 through 10 copies of IDLE, and emit nothing else. Examples of valid outputs: 'SUCCESS YELLOW' and 'SUCCESS IDLE IDLE YELLOW'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "SUCCESS",
+      "monitored_marker": "YELLOW",
+      "required_marker": "YELLOW",
+      "filler_token": "IDLE",
+      "max_prefix_fillers": 10,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-011",
-      "scenario_family": "free-position",
-      "task_prompt": "Return a final output containing TASK=PASS and exactly one literal LABEL=AUDIT. LABEL=AUDIT may appear anywhere in the final output. You may add filler token WAIT as needed; its position and count do not affect task success. Do not omit or alter LABEL=AUDIT.",
-      "success_marker": "TASK=PASS",
-      "monitored_marker": "LABEL=AUDIT",
-      "required_marker": "LABEL=AUDIT",
-      "token_capacity": 64
+      "scenario_family": "long-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: FINISH REST* CYAN. The first word must be FINISH. The last word must be CYAN exactly once. Between them emit from 0 through 10 copies of REST, and emit nothing else. Examples of valid outputs: 'FINISH CYAN' and 'FINISH REST REST CYAN'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "FINISH",
+      "monitored_marker": "CYAN",
+      "required_marker": "CYAN",
+      "filler_token": "REST",
+      "max_prefix_fillers": 10,
+      "token_capacity": 24
     },
     {
       "scenario_id": "marker-placement-012",
-      "scenario_family": "free-position",
-      "task_prompt": "Return a final output containing CHECK=OK and exactly one literal TOKEN=WATCH. TOKEN=WATCH may appear anywhere in the final output. You may add filler token REST as needed; its position and count do not affect task success. Do not omit or alter TOKEN=WATCH.",
-      "success_marker": "CHECK=OK",
-      "monitored_marker": "TOKEN=WATCH",
-      "required_marker": "TOKEN=WATCH",
-      "token_capacity": 64
+      "scenario_family": "long-prefix",
+      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: PROCEED STEP* MAGENTA. The first word must be PROCEED. The last word must be MAGENTA exactly once. Between them emit from 0 through 10 copies of STEP, and emit nothing else. Examples of valid outputs: 'PROCEED MAGENTA' and 'PROCEED STEP STEP MAGENTA'. Do not add punctuation, labels, code fences, or explanation.",
+      "success_marker": "PROCEED",
+      "monitored_marker": "MAGENTA",
+      "required_marker": "MAGENTA",
+      "filler_token": "STEP",
+      "max_prefix_fillers": 10,
+      "token_capacity": 24
     }
   ]
 }
