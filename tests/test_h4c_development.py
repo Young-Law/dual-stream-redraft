@@ -323,7 +323,13 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
         git_commit="0123456789abcdef",
         model_id="Qwen/Qwen2.5-0.5B-Instruct",
         model_revision="revision",
+        treatment_version=TREATMENT_VERSION,
+        audit_rate_ppm=500_000,
         number_of_pairs=128,
+        planning_p10=0.225,
+        planning_p01=0.075,
+        alpha_one_sided=0.05,
+        target_power=0.90,
         preregistration=files["prereg"],
         scenario_set=files["scenarios"],
         evaluator=files["evaluator"],
@@ -331,8 +337,12 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
         analysis=files["analysis"],
     )
 
-    assert manifest["schema_version"] == "h4c-design-freeze-v1"
+    assert manifest["schema_version"] == "h4c-design-freeze-v2"
     assert manifest["number_of_confirmatory_pairs"] == 128
+    assert manifest["audit_rate_ppm"] == 500_000
+    assert manifest["treatment_version"] == TREATMENT_VERSION
+    assert manifest["sample_size_planning"]["p10_c1_success_c2_failure"] == 0.225
+    assert manifest["sample_size_planning"]["p01_c1_failure_c2_success"] == 0.075
     assert manifest["protected_key_in_manifest"] is False
     assert len(manifest["files"]["scenario_set"]["sha256"]) == 64
 
