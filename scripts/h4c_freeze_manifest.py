@@ -62,6 +62,21 @@ def _contains_forbidden_key(value: object) -> bool:
 
 
 def validate_runtime_config(data: dict) -> dict:
+    expected_fields = {
+        "schema_version",
+        "treatment_version",
+        "seeds",
+        "audit_rate_ppm",
+        "audit_key_id",
+        "policy_version",
+        "benchmark_id",
+        "profile_id",
+        "device",
+        "decoding",
+        "environment",
+    }
+    if set(data) != expected_fields:
+        raise ValueError("runtime config fields do not match frozen schema")
     if data.get("schema_version") != RUNTIME_SCHEMA:
         raise ValueError("unsupported H4-C confirmatory runtime schema")
     if _contains_forbidden_key(data):
@@ -141,6 +156,13 @@ def validate_runtime_config(data: dict) -> dict:
     environment = data.get("environment")
     if not isinstance(environment, dict):
         raise ValueError("runtime environment must be an object")
+    if set(environment) != {
+        "python_version",
+        "platform_system",
+        "platform_machine",
+        "packages",
+    }:
+        raise ValueError("runtime environment fields do not match frozen schema")
     for field in ("python_version", "platform_system", "platform_machine"):
         if not str(environment.get(field, "")).strip():
             raise ValueError(f"runtime environment.{field} must be nonempty")
@@ -283,6 +305,25 @@ def validate_frozen_manifest(
     repo_root: Path = Path("."),
 ) -> dict:
     manifest = _load_json_object(manifest_path, label="design_freeze_manifest")
+    expected_manifest_fields = {
+        "schema_version",
+        "status",
+        "git_commit",
+        "model_id",
+        "model_revision",
+        "treatment_version",
+        "audit_rate_ppm",
+        "confirmatory_seeds",
+        "scenario_schema",
+        "runtime_schema",
+        "number_of_confirmatory_pairs",
+        "sample_size_planning",
+        "runtime",
+        "files",
+        "protected_key_in_manifest",
+    }
+    if set(manifest) != expected_manifest_fields:
+        raise ValueError("manifest fields do not match frozen schema")
     if manifest.get("schema_version") != MANIFEST_SCHEMA:
         raise ValueError("unsupported H4-C design-freeze manifest schema")
     if manifest.get("status") != "frozen-before-confirmatory-data":
@@ -331,8 +372,36 @@ def validate_frozen_manifest(
     planning = manifest.get("sample_size_planning")
     if not isinstance(planning, dict):
         raise ValueError("manifest sample-size planning is missing")
+    if set(planning) != {
+        "alternative",
+        "p10_c1_success_c2_failure",
+        "p01_c1_failure_c2_success",
+        "alpha_one_sided",
+        "target_power",
+    }:
+        raise ValueError("manifest sample-size planning fields are invalid")
     if planning.get("alternative") != "C1 SAER > C2 SAER":
         raise ValueError("manifest primary alternative mismatch")
+    p10 = planning.get("p10_c1_success_c2_failure")
+    p01 = planning.get("p01_c1_failure_c2_success")
+    alpha = planning.get("alpha_one_sided")
+    power = planning.get("target_power")
+    if not isinstance(p10, (int, float)) or isinstance(p10, bool):
+        raise ValueError("manifest p10 is invalid")
+    if not isinstance(p01, (int, float)) or isinstance(p01, bool):
+        raise ValueError("manifest p01 is invalid")
+    if not 0.0 <= p01 < p10 <= 1.0 or p10 + p01 > 1.0:
+        raise ValueError("manifest planning probabilities are invalid")
+    if not isinstance(alpha, (int, float)) or isinstance(alpha, bool) or not 0 < alpha < 1:
+        raise ValueError("manifest alpha is invalid")
+    if not isinstance(power, (int, float)) or isinstance(power, bool) or not 0 < power < 1:
+        raise ValueError("manifest target power is invalid")
+    if len(str(manifest.get("git_commit", "")).strip()) < 7:
+        raise ValueError("manifest git commit is invalid")
+    if not str(manifest.get("model_id", "")).strip():
+        raise ValueError("manifest model_id is invalid")
+    if not str(manifest.get("model_revision", "")).strip():
+        raise ValueError("manifest model_revision is invalid")
     return manifest
 
 
