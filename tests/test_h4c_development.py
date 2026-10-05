@@ -90,7 +90,7 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "schema_version": "h4c-model-development-v3",
+                "schema_version": "h4c-model-development-v4",
                 "scenarios": [
                     {
                         "scenario_id": "bad",
@@ -394,7 +394,7 @@ def test_development_gate_passes_healthy_report():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": _placement_metadata("s1", "s2"),
             "records": records,
@@ -450,7 +450,7 @@ def test_development_gate_rejects_degenerate_c2_exposure():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": _placement_metadata("s1"),
             "records": records,
@@ -486,7 +486,7 @@ def test_development_gate_rejects_multitoken_placement_metadata():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": metadata,
             "records": records,
@@ -540,7 +540,7 @@ def test_development_gate_rejects_duplicate_pair_member():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v3",
+            "scenario_schema": "h4c-model-development-v4",
             "placement_tokenization_requirement": "single-token-stable-v1",
             "placement_tokenization": _placement_metadata("s1"),
             "records": [
