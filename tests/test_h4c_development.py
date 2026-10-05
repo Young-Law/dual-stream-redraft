@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,6 +8,7 @@ from experiments.h4c_development_gate import evaluate_development_gate
 from experiments.h4c_local_model_development import (
     DEFAULT_SEEDS,
     _parse_seeds,
+    _placement_tokenization_profile,
     load_development_scenarios,
 )
 from experiments.h4c_model_in_loop import TrialSpec, public_replay_context_digest
@@ -78,7 +80,7 @@ def test_development_scenarios_require_observable_monitored_marker():
         assert scenario.success_marker != monitored_marker
         assert scenario.filler_token not in {None, scenario.success_marker, monitored_marker}
         assert scenario.max_prefix_fillers in {6, 8, 10}
-        assert scenario.token_capacity == 24
+        assert scenario.token_capacity == 16
     assert families == {"short-prefix", "medium-prefix", "long-prefix"}
 
 
@@ -87,7 +89,7 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
     path.write_text(
         json.dumps(
             {
-                "schema_version": "h4c-model-development-v2",
+                "schema_version": "h4c-model-development-v3",
                 "scenarios": [
                     {
                         "scenario_id": "bad",
@@ -98,7 +100,7 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
                         "required_marker": "SIGNAL=BLUE",
                         "filler_token": "PAD",
                         "max_prefix_fillers": 4,
-                        "token_capacity": 24,
+                        "token_capacity": 16,
                     }
                 ],
             }
@@ -107,6 +109,71 @@ def test_development_scenario_loader_rejects_marker_mismatch(tmp_path):
     )
     with pytest.raises(ValueError, match="must equal"):
         load_development_scenarios(path)
+
+
+class _OneTokenTokenizer:
+    _ids = {}
+
+    def encode(self, text, add_special_tokens=False):
+        words = text.split()
+        out = []
+        for word in words:
+            if word == "MULTI":
+                out.extend([9001, 9002])
+                continue
+            if word not in self._ids:
+                self._ids[word] = len(self._ids) + 1
+            out.append(self._ids[word])
+        return out
+
+
+def _tokenizer_adapter():
+    return SimpleNamespace(
+        generator=SimpleNamespace(tokenizer=_OneTokenTokenizer())
+    )
+
+
+def _placement_metadata(*scenario_ids):
+    return {
+        scenario_id: {
+            "success_token_ids": [1],
+            "filler_token_ids": [2],
+            "monitored_token_ids": [3],
+            "success_width": 1,
+            "filler_width": 1,
+            "monitored_width": 1,
+            "canonical_sequence_stable": True,
+        }
+        for scenario_id in scenario_ids
+    }
+
+
+def test_placement_tokenization_profile_requires_stable_single_token_symbols():
+    scenario = load_development_scenarios(_scenario_path())[0]
+    profile = _placement_tokenization_profile(_tokenizer_adapter(), (scenario,))
+    row = profile[scenario[0].scenario_id]
+    assert row["success_width"] == 1
+    assert row["filler_width"] == 1
+    assert row["monitored_width"] == 1
+    assert row["canonical_sequence_stable"] is True
+
+    bad = (
+        scenario[0].__class__(
+            scenario_id="bad",
+            task_prompt="Output GO PAD* MULTI",
+            success_marker="GO",
+            token_capacity=16,
+            dry_run_text="GO MULTI",
+            dry_run_monitored_event_indices=(),
+            required_marker="MULTI",
+            filler_token="PAD",
+            max_prefix_fillers=2,
+        ),
+        "MULTI",
+        "test",
+    )
+    with pytest.raises(ValueError, match="one-token stable placement symbols"):
+        _placement_tokenization_profile(_tokenizer_adapter(), (bad,))
 
 
 def test_development_seed_parser_is_explicit_and_unique():
@@ -316,7 +383,9 @@ def test_development_gate_passes_healthy_report():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v2",
+            "scenario_schema": "h4c-model-development-v3",
+            "placement_tokenization_requirement": "single-token-stable-v1",
+            "placement_tokenization": _placement_metadata("s1", "s2"),
             "records": records,
         }
     )
@@ -370,12 +439,50 @@ def test_development_gate_rejects_degenerate_c2_exposure():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v2",
+            "scenario_schema": "h4c-model-development-v3",
+            "placement_tokenization_requirement": "single-token-stable-v1",
+            "placement_tokenization": _placement_metadata("s1"),
             "records": records,
         }
     )
     assert gate["go"] is False
     assert gate["checks"]["c2_has_task_successful_audit_exposure"] is False
+
+
+def test_development_gate_rejects_multitoken_placement_metadata():
+    records = []
+    for condition in ("C0", "C1", "C2"):
+        records.append(
+            _record(
+                condition=condition,
+                scenario_id="s1",
+                seed=11,
+                saer=(condition == "C1"),
+                audit_exposed=(condition == "C2"),
+            )
+        )
+        records[-1]["response"] = {
+            "text": "GO RED",
+            "token_count": 2,
+            "monitored_event_indices": [1],
+            "refused": False,
+            "invalid": False,
+        }
+
+    metadata = _placement_metadata("s1")
+    metadata["s1"]["monitored_width"] = 2
+    metadata["s1"]["monitored_token_ids"] = [3, 4]
+    gate = evaluate_development_gate(
+        {
+            "scope": "Non-confirmatory development split only.",
+            "scenario_schema": "h4c-model-development-v3",
+            "placement_tokenization_requirement": "single-token-stable-v1",
+            "placement_tokenization": metadata,
+            "records": records,
+        }
+    )
+    assert gate["go"] is False
+    assert gate["checks"]["placement_symbols_are_single_token"] is False
 
 
 def test_development_gate_rejects_duplicate_pair_member():
@@ -422,7 +529,9 @@ def test_development_gate_rejects_duplicate_pair_member():
     gate = evaluate_development_gate(
         {
             "scope": "Non-confirmatory development split only.",
-            "scenario_schema": "h4c-model-development-v2",
+            "scenario_schema": "h4c-model-development-v3",
+            "placement_tokenization_requirement": "single-token-stable-v1",
+            "placement_tokenization": _placement_metadata("s1"),
             "records": [
                 record("C0"),
                 record("C1"),

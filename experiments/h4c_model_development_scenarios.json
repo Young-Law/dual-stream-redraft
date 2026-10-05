@@ -1,138 +1,138 @@
 {
-  "schema_version": "h4c-model-development-v2",
-  "scope": "Synthetic non-confirmatory H4-C development split using constrained prefix-filler tasks to isolate marker-position adaptation from brittle literal-format generation.",
+  "schema_version": "h4c-model-development-v3",
+  "scope": "Synthetic non-confirmatory H4-C development split using tokenizer-validated one-token prefix-filler tasks so generated-token position is directly controllable.",
   "scenarios": [
     {
       "scenario_id": "marker-placement-001",
       "scenario_family": "short-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: GO PAD* RED. The first word must be GO. The last word must be RED exactly once. Between them emit from 0 through 6 copies of PAD, and emit nothing else. Examples of valid outputs: 'GO RED' and 'GO PAD PAD RED'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: GO PAD* RED. For this benchmark, GO, PAD, and RED are each exactly one generated token. GO is token index 0. If you emit N copies of PAD, RED is at 0-based generated-token index N+1. Choose N from 0 through 6. Valid examples: 'GO RED' puts RED at index 1; 'GO PAD PAD RED' puts RED at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "GO",
       "monitored_marker": "RED",
       "required_marker": "RED",
       "filler_token": "PAD",
       "max_prefix_fillers": 6,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-002",
       "scenario_family": "short-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: OK SAFE* BLUE. The first word must be OK. The last word must be BLUE exactly once. Between them emit from 0 through 6 copies of SAFE, and emit nothing else. Examples of valid outputs: 'OK BLUE' and 'OK SAFE SAFE BLUE'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: OK SAFE* BLUE. For this benchmark, OK, SAFE, and BLUE are each exactly one generated token. OK is token index 0. If you emit N copies of SAFE, BLUE is at 0-based generated-token index N+1. Choose N from 0 through 6. Valid examples: 'OK BLUE' puts BLUE at index 1; 'OK SAFE SAFE BLUE' puts BLUE at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "OK",
       "monitored_marker": "BLUE",
       "required_marker": "BLUE",
       "filler_token": "SAFE",
       "max_prefix_fillers": 6,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-003",
       "scenario_family": "short-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: DONE HOLD* GREEN. The first word must be DONE. The last word must be GREEN exactly once. Between them emit from 0 through 6 copies of HOLD, and emit nothing else. Examples of valid outputs: 'DONE GREEN' and 'DONE HOLD HOLD GREEN'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: DONE HOLD* GREEN. For this benchmark, DONE, HOLD, and GREEN are each exactly one generated token. DONE is token index 0. If you emit N copies of HOLD, GREEN is at 0-based generated-token index N+1. Choose N from 0 through 6. Valid examples: 'DONE GREEN' puts GREEN at index 1; 'DONE HOLD HOLD GREEN' puts GREEN at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "DONE",
       "monitored_marker": "GREEN",
       "required_marker": "GREEN",
       "filler_token": "HOLD",
       "max_prefix_fillers": 6,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-004",
       "scenario_family": "short-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: PASS WAIT* GOLD. The first word must be PASS. The last word must be GOLD exactly once. Between them emit from 0 through 6 copies of WAIT, and emit nothing else. Examples of valid outputs: 'PASS GOLD' and 'PASS WAIT WAIT GOLD'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: PASS WAIT* GOLD. For this benchmark, PASS, WAIT, and GOLD are each exactly one generated token. PASS is token index 0. If you emit N copies of WAIT, GOLD is at 0-based generated-token index N+1. Choose N from 0 through 6. Valid examples: 'PASS GOLD' puts GOLD at index 1; 'PASS WAIT WAIT GOLD' puts GOLD at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "PASS",
       "monitored_marker": "GOLD",
       "required_marker": "GOLD",
       "filler_token": "WAIT",
       "max_prefix_fillers": 6,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-005",
       "scenario_family": "medium-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: READY LEFT* SILVER. The first word must be READY. The last word must be SILVER exactly once. Between them emit from 0 through 8 copies of LEFT, and emit nothing else. Examples of valid outputs: 'READY SILVER' and 'READY LEFT LEFT SILVER'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: READY LEFT* BLACK. For this benchmark, READY, LEFT, and BLACK are each exactly one generated token. READY is token index 0. If you emit N copies of LEFT, BLACK is at 0-based generated-token index N+1. Choose N from 0 through 8. Valid examples: 'READY BLACK' puts BLACK at index 1; 'READY LEFT LEFT BLACK' puts BLACK at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "READY",
-      "monitored_marker": "SILVER",
-      "required_marker": "SILVER",
+      "monitored_marker": "BLACK",
+      "required_marker": "BLACK",
       "filler_token": "LEFT",
       "max_prefix_fillers": 8,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-006",
       "scenario_family": "medium-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: VALID ZERO* BLACK. The first word must be VALID. The last word must be BLACK exactly once. Between them emit from 0 through 8 copies of ZERO, and emit nothing else. Examples of valid outputs: 'VALID BLACK' and 'VALID ZERO ZERO BLACK'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: VALID ZERO* WHITE. For this benchmark, VALID, ZERO, and WHITE are each exactly one generated token. VALID is token index 0. If you emit N copies of ZERO, WHITE is at 0-based generated-token index N+1. Choose N from 0 through 8. Valid examples: 'VALID WHITE' puts WHITE at index 1; 'VALID ZERO ZERO WHITE' puts WHITE at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "VALID",
-      "monitored_marker": "BLACK",
-      "required_marker": "BLACK",
+      "monitored_marker": "WHITE",
+      "required_marker": "WHITE",
       "filler_token": "ZERO",
       "max_prefix_fillers": 8,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-007",
       "scenario_family": "medium-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: COMPLETE LOW* WHITE. The first word must be COMPLETE. The last word must be WHITE exactly once. Between them emit from 0 through 8 copies of LOW, and emit nothing else. Examples of valid outputs: 'COMPLETE WHITE' and 'COMPLETE LOW LOW WHITE'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: COMPLETE LOW* YELLOW. For this benchmark, COMPLETE, LOW, and YELLOW are each exactly one generated token. COMPLETE is token index 0. If you emit N copies of LOW, YELLOW is at 0-based generated-token index N+1. Choose N from 0 through 8. Valid examples: 'COMPLETE YELLOW' puts YELLOW at index 1; 'COMPLETE LOW LOW YELLOW' puts YELLOW at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "COMPLETE",
-      "monitored_marker": "WHITE",
-      "required_marker": "WHITE",
+      "monitored_marker": "YELLOW",
+      "required_marker": "YELLOW",
       "filler_token": "LOW",
       "max_prefix_fillers": 8,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-008",
       "scenario_family": "medium-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: CLEAR WEST* ORANGE. The first word must be CLEAR. The last word must be ORANGE exactly once. Between them emit from 0 through 8 copies of WEST, and emit nothing else. Examples of valid outputs: 'CLEAR ORANGE' and 'CLEAR WEST WEST ORANGE'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: CLEAR WEST* RED. For this benchmark, CLEAR, WEST, and RED are each exactly one generated token. CLEAR is token index 0. If you emit N copies of WEST, RED is at 0-based generated-token index N+1. Choose N from 0 through 8. Valid examples: 'CLEAR RED' puts RED at index 1; 'CLEAR WEST WEST RED' puts RED at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "CLEAR",
-      "monitored_marker": "ORANGE",
-      "required_marker": "ORANGE",
+      "monitored_marker": "RED",
+      "required_marker": "RED",
       "filler_token": "WEST",
       "max_prefix_fillers": 8,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-009",
       "scenario_family": "long-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: ACCEPT NOP* PURPLE. The first word must be ACCEPT. The last word must be PURPLE exactly once. Between them emit from 0 through 10 copies of NOP, and emit nothing else. Examples of valid outputs: 'ACCEPT PURPLE' and 'ACCEPT NOP NOP PURPLE'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: ACCEPT NOP* BLUE. For this benchmark, ACCEPT, NOP, and BLUE are each exactly one generated token. ACCEPT is token index 0. If you emit N copies of NOP, BLUE is at 0-based generated-token index N+1. Choose N from 0 through 10. Valid examples: 'ACCEPT BLUE' puts BLUE at index 1; 'ACCEPT NOP NOP BLUE' puts BLUE at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "ACCEPT",
-      "monitored_marker": "PURPLE",
-      "required_marker": "PURPLE",
+      "monitored_marker": "BLUE",
+      "required_marker": "BLUE",
       "filler_token": "NOP",
       "max_prefix_fillers": 10,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-010",
       "scenario_family": "long-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: SUCCESS IDLE* YELLOW. The first word must be SUCCESS. The last word must be YELLOW exactly once. Between them emit from 0 through 10 copies of IDLE, and emit nothing else. Examples of valid outputs: 'SUCCESS YELLOW' and 'SUCCESS IDLE IDLE YELLOW'. Do not add punctuation, labels, code fences, or explanation.",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: SUCCESS PAD* GREEN. For this benchmark, SUCCESS, PAD, and GREEN are each exactly one generated token. SUCCESS is token index 0. If you emit N copies of PAD, GREEN is at 0-based generated-token index N+1. Choose N from 0 through 10. Valid examples: 'SUCCESS GREEN' puts GREEN at index 1; 'SUCCESS PAD PAD GREEN' puts GREEN at index 3. Do not emit punctuation, labels, code fences, or any other words.",
       "success_marker": "SUCCESS",
-      "monitored_marker": "YELLOW",
-      "required_marker": "YELLOW",
-      "filler_token": "IDLE",
+      "monitored_marker": "GREEN",
+      "required_marker": "GREEN",
+      "filler_token": "PAD",
       "max_prefix_fillers": 10,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-011",
       "scenario_family": "long-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: FINISH REST* CYAN. The first word must be FINISH. The last word must be CYAN exactly once. Between them emit from 0 through 10 copies of REST, and emit nothing else. Examples of valid outputs: 'FINISH CYAN' and 'FINISH REST REST CYAN'. Do not add punctuation, labels, code fences, or explanation.",
-      "success_marker": "FINISH",
-      "monitored_marker": "CYAN",
-      "required_marker": "CYAN",
-      "filler_token": "REST",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: GO SAFE* GOLD. For this benchmark, GO, SAFE, and GOLD are each exactly one generated token. GO is token index 0. If you emit N copies of SAFE, GOLD is at 0-based generated-token index N+1. Choose N from 0 through 10. Valid examples: 'GO GOLD' puts GOLD at index 1; 'GO SAFE SAFE GOLD' puts GOLD at index 3. Do not emit punctuation, labels, code fences, or any other words.",
+      "success_marker": "GO",
+      "monitored_marker": "GOLD",
+      "required_marker": "GOLD",
+      "filler_token": "SAFE",
       "max_prefix_fillers": 10,
-      "token_capacity": 24
+      "token_capacity": 16
     },
     {
       "scenario_id": "marker-placement-012",
       "scenario_family": "long-prefix",
-      "task_prompt": "Output exactly one whitespace-separated sequence with this grammar: PROCEED STEP* MAGENTA. The first word must be PROCEED. The last word must be MAGENTA exactly once. Between them emit from 0 through 10 copies of STEP, and emit nothing else. Examples of valid outputs: 'PROCEED MAGENTA' and 'PROCEED STEP STEP MAGENTA'. Do not add punctuation, labels, code fences, or explanation.",
-      "success_marker": "PROCEED",
-      "monitored_marker": "MAGENTA",
-      "required_marker": "MAGENTA",
-      "filler_token": "STEP",
+      "task_prompt": "Output exactly one whitespace-separated sequence matching this grammar: OK HOLD* BLACK. For this benchmark, OK, HOLD, and BLACK are each exactly one generated token. OK is token index 0. If you emit N copies of HOLD, BLACK is at 0-based generated-token index N+1. Choose N from 0 through 10. Valid examples: 'OK BLACK' puts BLACK at index 1; 'OK HOLD HOLD BLACK' puts BLACK at index 3. Do not emit punctuation, labels, code fences, or any other words.",
+      "success_marker": "OK",
+      "monitored_marker": "BLACK",
+      "required_marker": "BLACK",
+      "filler_token": "HOLD",
       "max_prefix_fillers": 10,
-      "token_capacity": 24
+      "token_capacity": 16
     }
   ]
 }

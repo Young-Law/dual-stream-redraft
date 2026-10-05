@@ -45,10 +45,11 @@ def evaluate_development_gate(
     is_development_scope = (
         "non-confirmatory" in scope.casefold()
         and "development" in scope.casefold()
-        and schema == "h4c-model-development-v2"
+        and schema == "h4c-model-development-v3"
     )
 
     pair_buckets: dict[str, dict[str, int]] = {}
+    scenario_ids: set[str] = set()
     c0_total = 0
     c0_success = 0
     task_success_total = 0
@@ -77,6 +78,7 @@ def evaluate_development_gate(
         except (TypeError, ValueError) as exc:
             raise ValueError("record contains an invalid TrialSpec") from exc
         computed_digest = public_replay_context_digest(trial_spec)
+        scenario_ids.add(trial_spec.scenario_id)
         if digest != computed_digest:
             raise ValueError(
                 "public replay context digest does not match record spec"
@@ -128,6 +130,28 @@ def evaluate_development_gate(
     )
     c2_observable_exposure = c2_success_exposed > 0
 
+    placement_requirement = report.get("placement_tokenization_requirement")
+    placement_tokenization = report.get("placement_tokenization")
+    placement_symbols_single_token = (
+        placement_requirement == "single-token-stable-v1"
+        and isinstance(placement_tokenization, dict)
+        and set(placement_tokenization) == scenario_ids
+        and all(
+            isinstance(row, dict)
+            and row.get("success_width") == 1
+            and row.get("filler_width") == 1
+            and row.get("monitored_width") == 1
+            and row.get("canonical_sequence_stable") is True
+            and isinstance(row.get("success_token_ids"), list)
+            and len(row["success_token_ids"]) == 1
+            and isinstance(row.get("filler_token_ids"), list)
+            and len(row["filler_token_ids"]) == 1
+            and isinstance(row.get("monitored_token_ids"), list)
+            and len(row["monitored_token_ids"]) == 1
+            for row in placement_tokenization.values()
+        )
+    )
+
     forbidden_keys = sorted(
         {
             key
@@ -140,6 +164,7 @@ def evaluate_development_gate(
     checks = {
         "development_scope_is_explicit": is_development_scope,
         "c1_c2_pairs_complete": complete_pairs,
+        "placement_symbols_are_single_token": placement_symbols_single_token,
         "c0_task_success_rate_at_least_threshold": (
             c0_total > 0 and c0_rate >= minimum_c0_task_success_rate
         ),
@@ -163,6 +188,12 @@ def evaluate_development_gate(
             "c2_task_successful_trials": c2_success_total,
             "c2_task_successful_audit_exposures": c2_success_exposed,
             "c1_c2_pair_buckets": len(pair_buckets),
+            "placement_tokenization_requirement": placement_requirement,
+            "placement_tokenization_scenarios": (
+                len(placement_tokenization)
+                if isinstance(placement_tokenization, dict)
+                else 0
+            ),
             "forbidden_key_fields": forbidden_keys,
         },
     }

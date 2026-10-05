@@ -22,7 +22,7 @@ from experiments.h4c_local_model_smoke import (
 from experiments.h4c_model_in_loop import ScenarioFixture, assert_paired_public_context
 
 
-SCHEMA_VERSION = "h4c-model-development-v2"
+SCHEMA_VERSION = "h4c-model-development-v3"
 DEFAULT_SEEDS = (11, 17, 23, 29)
 
 
@@ -107,6 +107,83 @@ def load_development_scenarios(
     return tuple(out)
 
 
+def _placement_tokenization_profile(
+    adapter: LocalHFAdapter,
+    scenarios: tuple[tuple[ScenarioFixture, str, str], ...],
+) -> dict[str, dict[str, object]]:
+    """Verify that legal placement words map 1:1 to generated-token positions.
+
+    Success words are encoded at the beginning of a completion. Filler and monitored
+    words are encoded with their preceding separator space. We also verify that
+    concatenating those independently encoded pieces matches tokenizer encoding of
+    canonical one- and two-filler sequences, guarding against context-dependent merges.
+    """
+    tokenizer = adapter.generator.tokenizer
+    profile: dict[str, dict[str, object]] = {}
+    failures: list[str] = []
+
+    def encode(text: str) -> tuple[int, ...]:
+        return tuple(
+            int(x)
+            for x in tokenizer.encode(
+                text,
+                add_special_tokens=False,
+            )
+        )
+
+    for scenario, _marker, _family in scenarios:
+        if (
+            scenario.required_marker is None
+            or scenario.filler_token is None
+            or scenario.max_prefix_fillers is None
+        ):
+            failures.append(f"{scenario.scenario_id}: missing placement contract")
+            continue
+
+        success_ids = encode(scenario.success_marker)
+        filler_ids = encode(" " + scenario.filler_token)
+        marker_ids = encode(" " + scenario.required_marker)
+        one_filler = encode(
+            f"{scenario.success_marker} {scenario.filler_token} "
+            f"{scenario.required_marker}"
+        )
+        two_fillers = encode(
+            f"{scenario.success_marker} {scenario.filler_token} "
+            f"{scenario.filler_token} {scenario.required_marker}"
+        )
+        stable = (
+            one_filler == success_ids + filler_ids + marker_ids
+            and two_fillers == success_ids + filler_ids + filler_ids + marker_ids
+        )
+
+        row = {
+            "success_token_ids": list(success_ids),
+            "filler_token_ids": list(filler_ids),
+            "monitored_token_ids": list(marker_ids),
+            "success_width": len(success_ids),
+            "filler_width": len(filler_ids),
+            "monitored_width": len(marker_ids),
+            "canonical_sequence_stable": stable,
+        }
+        profile[scenario.scenario_id] = row
+
+        if not (
+            len(success_ids) == len(filler_ids) == len(marker_ids) == 1
+            and stable
+        ):
+            failures.append(
+                f"{scenario.scenario_id}: expected one-token stable placement symbols, "
+                f"got widths success={len(success_ids)}, filler={len(filler_ids)}, "
+                f"monitored={len(marker_ids)}, stable={stable}"
+            )
+
+    if failures:
+        raise ValueError(
+            "H4-C placement tokenization preflight failed: " + "; ".join(failures)
+        )
+    return profile
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run non-confirmatory H4-C local-model development trials"
@@ -158,6 +235,10 @@ def main() -> int:
         device=args.device,
         cache_dir=args.cache_dir,
     )
+    try:
+        placement_tokenization = _placement_tokenization_profile(adapter, scenarios)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     records: list[dict] = []
     for scenario, _marker, family in scenarios:
@@ -197,6 +278,8 @@ def main() -> int:
         "resolved_model_revision": adapter.resolved_revision,
         "monitoring_position_method": "generated-token-prefix-decode-v2",
         "prompt_format": adapter.prompt_format,
+        "placement_tokenization_requirement": "single-token-stable-v1",
+        "placement_tokenization": placement_tokenization,
         "decoding": adapter.decoding_config,
         "seeds": list(seeds),
         "rate_ppm": args.rate_ppm,
