@@ -10,7 +10,9 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from dataclasses import asdict
+from importlib import metadata
 from pathlib import Path
 
 from experiments.h4c_local_hf_adapter import LocalHFAdapter
@@ -23,7 +25,10 @@ from experiments.h4c_model_in_loop import (
     build_model_request,
     evaluate_response,
 )
-from scripts.h4c_freeze_manifest import validate_frozen_manifest
+from scripts.h4c_freeze_manifest import (
+    validate_frozen_manifest,
+    validate_runtime_config,
+)
 
 SCENARIO_SCHEMA = "h4c-model-confirmatory-v1"
 RUNTIME_SCHEMA = "h4c-confirmatory-runtime-v1"
@@ -121,67 +126,44 @@ def load_confirmatory_scenarios(
 
 def _load_runtime_config(path: Path) -> dict:
     data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("schema_version") != RUNTIME_SCHEMA:
-        raise ValueError("unsupported H4-C confirmatory runtime schema")
+    if not isinstance(data, dict):
+        raise ValueError("confirmatory runtime config must be a JSON object")
+    validate_runtime_config(data)
     if data.get("treatment_version") != TREATMENT_VERSION:
         raise ValueError("runtime treatment_version does not match installed treatment")
-    seeds = data.get("seeds")
-    if (
-        not isinstance(seeds, list)
-        or not seeds
-        or any(type(seed) is not int for seed in seeds)
-        or len(set(seeds)) != len(seeds)
-    ):
-        raise ValueError("runtime seeds must be a nonempty unique integer list")
-    rate = data.get("audit_rate_ppm")
-    if type(rate) is not int or not 0 < rate < 1_000_000:
-        raise ValueError("runtime audit_rate_ppm must be between 1 and 999999")
-    key_id = data.get("audit_key_id")
-    if type(key_id) is not int or key_id < 0:
-        raise ValueError("runtime audit_key_id must be a nonnegative integer")
-    for field in ("policy_version", "benchmark_id", "profile_id"):
-        if not str(data.get(field, "")).strip():
-            raise ValueError(f"runtime {field} must be nonempty")
-
-    decoding = data.get("decoding")
-    if not isinstance(decoding, dict):
-        raise ValueError("runtime decoding must be an object")
-    required = {
-        "max_new_tokens",
-        "top_k",
-        "temperature",
-        "top_p",
-        "do_sample",
-        "repetition_penalty",
-        "no_repeat_ngram_size",
-    }
-    if set(decoding) != required:
-        raise ValueError("runtime decoding fields do not match frozen schema")
-    if type(decoding["max_new_tokens"]) is not int or decoding["max_new_tokens"] < 1:
-        raise ValueError("max_new_tokens must be positive")
-    if type(decoding["top_k"]) is not int or decoding["top_k"] < 1:
-        raise ValueError("top_k must be positive")
-    if not isinstance(decoding["temperature"], (int, float)) or decoding["temperature"] <= 0:
-        raise ValueError("temperature must be positive")
-    if not isinstance(decoding["top_p"], (int, float)) or not 0 < decoding["top_p"] <= 1:
-        raise ValueError("top_p must be in (0, 1]")
-    if type(decoding["do_sample"]) is not bool:
-        raise ValueError("do_sample must be boolean")
-    if (
-        not isinstance(decoding["repetition_penalty"], (int, float))
-        or decoding["repetition_penalty"] <= 0
-    ):
-        raise ValueError("repetition_penalty must be positive")
-    if (
-        type(decoding["no_repeat_ngram_size"]) is not int
-        or decoding["no_repeat_ngram_size"] < 0
-    ):
-        raise ValueError("no_repeat_ngram_size must be nonnegative")
-
-    device = data.get("device")
-    if device is not None and not isinstance(device, str):
-        raise ValueError("runtime device must be a string or null")
     return data
+
+
+def _validate_environment(runtime: dict) -> None:
+    expected = runtime["environment"]
+    observed_python = platform.python_version()
+    if observed_python != expected["python_version"]:
+        raise ValueError(
+            "frozen Python version mismatch: "
+            f"expected {expected['python_version']}, observed {observed_python}"
+        )
+    observed_system = platform.system()
+    if observed_system != expected["platform_system"]:
+        raise ValueError(
+            "frozen platform system mismatch: "
+            f"expected {expected['platform_system']}, observed {observed_system}"
+        )
+    observed_machine = platform.machine()
+    if observed_machine != expected["platform_machine"]:
+        raise ValueError(
+            "frozen platform machine mismatch: "
+            f"expected {expected['platform_machine']}, observed {observed_machine}"
+        )
+    for package, expected_version in expected["packages"].items():
+        try:
+            observed_version = metadata.version(package)
+        except metadata.PackageNotFoundError as exc:
+            raise ValueError(f"frozen package is not installed: {package}") from exc
+        if observed_version != expected_version:
+            raise ValueError(
+                f"frozen package version mismatch for {package}: "
+                f"expected {expected_version}, observed {observed_version}"
+            )
 
 
 def _placement_tokenization_profile(
@@ -329,6 +311,7 @@ def run_confirmatory(
     runtime_path = Path(files["runtime_config"]["path"])
 
     runtime = _load_runtime_config(runtime_path)
+    _validate_environment(runtime)
     scenarios = load_confirmatory_scenarios(scenario_path)
     seeds = tuple(int(seed) for seed in runtime["seeds"])
     expected_pairs = len(scenarios) * len(seeds)
