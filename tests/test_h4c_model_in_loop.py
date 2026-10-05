@@ -110,6 +110,8 @@ def test_schedule_is_identical_for_pair_and_key_separated_from_request():
     request2 = build_model_request(protected, _scenario(), audit_schedule=schedule2)
     assert request1.disclosed_audit_indices == schedule1
     assert request2.disclosed_audit_indices is None
+    assert ",".join(map(str, schedule1)) in request1.treatment_instruction
+    assert "listed output" not in request1.treatment_instruction
     serialized = json.dumps(request2.to_dict(), sort_keys=True)
     assert key.hex() not in serialized
 
