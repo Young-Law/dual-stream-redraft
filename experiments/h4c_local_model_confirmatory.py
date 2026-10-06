@@ -376,7 +376,7 @@ def run_confirmatory(
 
     protected_key = _protected_key_from_env(
         audit_key_id=int(runtime["audit_key_id"]),
-        expected_commitment=str(runtime["audit_key_commitment_sha256"]),
+        expected_commitment=str(runtime["key_commitment"]),
     )
     marker_map = {
         scenario.scenario_id: marker
