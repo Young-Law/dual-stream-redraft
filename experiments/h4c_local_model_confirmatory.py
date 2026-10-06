@@ -166,6 +166,44 @@ def _validate_environment(runtime: dict) -> None:
             )
 
 
+def _validate_generation_capacity(
+    runtime: dict,
+    scenarios: tuple[tuple[ScenarioFixture, str, str], ...],
+) -> None:
+    max_new_tokens = int(runtime["decoding"]["max_new_tokens"])
+    for scenario, _marker, _family in scenarios:
+        required = int(scenario.max_prefix_fillers or 0) + 2
+        if max_new_tokens < required:
+            raise ValueError(
+                f"{scenario.scenario_id}: frozen max_new_tokens cannot represent "
+                "every legal output"
+            )
+
+
+def _validate_loaded_model_identity_and_device(
+    adapter: LocalHFAdapter,
+    *,
+    model_revision: str,
+    device: str,
+) -> None:
+    if not adapter.resolved_revision:
+        raise ValueError("loaded model revision could not be resolved")
+    if adapter.resolved_revision != model_revision:
+        raise ValueError("loaded model revision does not match frozen revision")
+    generator_device = str(getattr(adapter.generator, "device", ""))
+    if generator_device != device:
+        raise ValueError("generator device does not match frozen device")
+    try:
+        model_device = str(next(adapter.generator.model.parameters()).device)
+    except (AttributeError, StopIteration) as exc:
+        raise ValueError("loaded model device could not be verified") from exc
+    if device == "cuda":
+        if not model_device.startswith("cuda"):
+            raise ValueError("loaded model is not on frozen device")
+    elif model_device != device:
+        raise ValueError("loaded model is not on frozen device")
+
+
 def _placement_tokenization_profile(
     adapter: LocalHFAdapter,
     scenarios: tuple[tuple[ScenarioFixture, str, str], ...],
@@ -324,6 +362,7 @@ def run_confirmatory(
         for scenario, marker, _family in scenarios
     }
     decoding = runtime["decoding"]
+    _validate_generation_capacity(runtime, scenarios)
     adapter = LocalHFAdapter(
         model_id=manifest["model_id"],
         model_revision=manifest["model_revision"],
@@ -338,6 +377,11 @@ def run_confirmatory(
         local_files_only=not allow_network,
         device=runtime.get("device"),
         cache_dir=cache_dir,
+    )
+    _validate_loaded_model_identity_and_device(
+        adapter,
+        model_revision=manifest["model_revision"],
+        device=runtime["device"],
     )
     placement_tokenization = _placement_tokenization_profile(adapter, scenarios)
 
