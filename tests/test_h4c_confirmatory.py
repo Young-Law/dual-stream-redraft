@@ -16,7 +16,7 @@ def _runtime() -> dict:
     return {
         "schema_version": "h4c-confirmatory-runtime-v1",
         "treatment_version": TREATMENT_VERSION,
-        "seeds": [101, 103],
+        "seeds": [101, 103, 107],
         "audit_rate_ppm": 250_000,
         "audit_key_id": 7,
         "policy_version": "v2.10.1",
@@ -91,6 +91,7 @@ def _make_frozen_fixture(tmp_path: Path) -> tuple[dict, Path]:
         "adapter",
         "runner",
         "analysis",
+        "power",
         "generator",
         "schedule",
         "validator",
