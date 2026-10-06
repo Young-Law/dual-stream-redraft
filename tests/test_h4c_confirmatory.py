@@ -157,8 +157,8 @@ def test_freeze_manifest_validates_hashes_and_runtime(tmp_path):
     manifest, manifest_path = _make_frozen_fixture(tmp_path)
     validated = validate_frozen_manifest(manifest_path, repo_root=tmp_path)
     assert validated == manifest
-    assert validated["runtime"]["seeds"] == [101, 103]
-    assert validated["number_of_confirmatory_pairs"] == 4
+    assert validated["runtime"]["seeds"] == [101, 103, 107]
+    assert validated["number_of_confirmatory_pairs"] == 6
 
     (tmp_path / "evaluator.txt").write_text("tampered\n", encoding="utf-8")
     with pytest.raises(ValueError, match="hash mismatch: evaluator"):
@@ -173,8 +173,8 @@ def test_freeze_manifest_rejects_pair_count_not_matching_scenarios_and_seeds(tmp
             model_id="Qwen/Qwen2.5-3B-Instruct",
             model_revision="immutable-revision",
             number_of_pairs=5,
-            planning_p10=0.225,
-            planning_p01=0.075,
+            planning_p10=0.99,
+            planning_p01=0.0,
             alpha_one_sided=0.05,
             target_power=0.90,
             preregistration=Path("prereg.txt"),
@@ -184,6 +184,7 @@ def test_freeze_manifest_rejects_pair_count_not_matching_scenarios_and_seeds(tmp
             adapter=Path("adapter.txt"),
             runner=Path("runner.txt"),
             analysis=Path("analysis.txt"),
+            power_helper=Path("power.txt"),
             generator_runtime=Path("generator.txt"),
             schedule_implementation=Path("schedule.txt"),
             freeze_validator=Path("validator.txt"),
