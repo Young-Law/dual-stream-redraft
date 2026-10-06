@@ -114,6 +114,7 @@ def _make_frozen_fixture(tmp_path: Path) -> tuple[dict, Path]:
         adapter=Path("adapter.txt"),
         runner=Path("runner.txt"),
         analysis=Path("analysis.txt"),
+        power_helper=Path("power.txt"),
         generator_runtime=Path("generator.txt"),
         schedule_implementation=Path("schedule.txt"),
         freeze_validator=Path("validator.txt"),
