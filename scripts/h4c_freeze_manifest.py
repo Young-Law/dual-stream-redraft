@@ -55,21 +55,36 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _resolve_git_commit(repo_root: Path = Path(".")) -> str:
+def _resolve_git_commit(ref: str, repo_root: Path = Path(".")) -> str:
     try:
         completed = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "--verify", f"{ref}^{commit}"],
             cwd=repo_root,
             check=True,
             capture_output=True,
             text=True,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise ValueError("unable to resolve checked-out repository commit") from exc
-    commit = completed.stdout.strip().lower()
-    if len(commit) != 40 or any(ch not in "0123456789abcdef" for ch in commit):
-        raise ValueError("checked-out repository commit is not a full SHA-1")
-    return commit
+        raise ValueError("unable to resolve declared repository commit") from exc
+    commit_sha = completed.stdout.strip().lower()
+    if len(commit_sha) != 40 or any(ch not in "0123456789abcdef" for ch in commit_sha):
+        raise ValueError("declared repository commit is not a full SHA-1")
+    return commit_sha
+
+
+def _sha256_at_commit(repo_root: Path, commit_sha: str, path: Path) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "show", f"{commit_sha}:{path.as_posix()}"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(
+            f"frozen file is absent from declared repository commit: {path.as_posix()}"
+        ) from exc
+    return hashlib.sha256(completed.stdout).hexdigest()
 
 
 def _load_json_object(path: Path, *, label: str) -> dict:
@@ -276,9 +291,7 @@ def build_manifest(
     freeze_validator: Path,
     repo_root: Path = Path("."),
 ) -> dict:
-    resolved_git_commit = _resolve_git_commit(Path("."))
-    if git_commit.strip().lower() != resolved_git_commit:
-        raise ValueError("git_commit does not match checked-out repository HEAD")
+    resolved_git_commit = _resolve_git_commit(git_commit.strip(), Path("."))
     if not model_id.strip() or not model_revision.strip():
         raise ValueError("model_id and model_revision must be nonempty")
     if number_of_pairs < 1:
@@ -310,6 +323,13 @@ def build_manifest(
         name: _resolve_repo_file(repo_root, path, label=name)
         for name, path in file_paths.items()
     }
+    for name, path in file_paths.items():
+        working_hash = _sha256(resolved[name])
+        committed_hash = _sha256_at_commit(Path("."), resolved_git_commit, path)
+        if working_hash != committed_hash:
+            raise ValueError(
+                f"{name} does not match the declared repository commit"
+            )
 
     runtime = validate_runtime_config(
         _load_json_object(resolved["runtime_config"], label="runtime_config")
@@ -417,6 +437,11 @@ def validate_frozen_manifest(
         actual = _sha256(resolved)
         if actual != expected:
             raise ValueError(f"frozen file hash mismatch: {role}")
+        committed = _sha256_at_commit(Path("."), manifest["git_commit"], path)
+        if committed != expected:
+            raise ValueError(
+                f"declared repository commit does not contain frozen {role} bytes"
+            )
 
     runtime_path = repo_root / Path(files["runtime_config"]["path"])
     runtime = validate_runtime_config(
@@ -479,8 +504,9 @@ def validate_frozen_manifest(
     if recomputed_power < float(power):
         raise ValueError("manifest pair count does not satisfy target power")
     manifest_git_commit = str(manifest.get("git_commit", "")).strip().lower()
-    if manifest_git_commit != _resolve_git_commit(Path(".")):
-        raise ValueError("manifest git commit does not match checked-out repository HEAD")
+    resolved_manifest_commit = _resolve_git_commit(manifest_git_commit, Path("."))
+    if manifest_git_commit != resolved_manifest_commit:
+        raise ValueError("manifest git commit is not canonical")
     if not str(manifest.get("model_id", "")).strip():
         raise ValueError("manifest model_id is invalid")
     if not str(manifest.get("model_revision", "")).strip():
