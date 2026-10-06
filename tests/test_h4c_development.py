@@ -369,7 +369,14 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(
         freeze_manifest,
         "_resolve_git_commit",
-        lambda _repo_root=Path("."): frozen_git_commit,
+        lambda _ref, _repo_root=Path("."): frozen_git_commit,
+    )
+    monkeypatch.setattr(
+        freeze_manifest,
+        "_sha256_at_commit",
+        lambda _repo_root, _commit, relative_path: freeze_manifest._sha256(
+            tmp_path / relative_path
+        ),
     )
     canonical_files = (
         Path("docs/h4c_model_in_loop_preregistration.md"),
