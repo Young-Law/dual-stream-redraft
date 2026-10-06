@@ -10,6 +10,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from experiments.h4c_power import exact_directional_mcnemar_power
+
 MANIFEST_SCHEMA = "h4c-design-freeze-v3"
 RUNTIME_SCHEMA = "h4c-confirmatory-runtime-v1"
 SCENARIO_SCHEMA = "h4c-model-confirmatory-v1"
@@ -22,6 +24,7 @@ _REQUIRED_FILE_ROLES = {
     "adapter",
     "runner",
     "analysis",
+    "power_helper",
     "generator_runtime",
     "schedule_implementation",
     "freeze_validator",
