@@ -213,3 +213,97 @@ def test_confirmatory_runtime_rejects_treatment_drift(tmp_path):
     path.write_text(json.dumps(runtime), encoding="utf-8")
     with pytest.raises(ValueError, match="installed treatment"):
         confirmatory._load_runtime_config(path)
+
+
+def test_runtime_config_requires_explicit_device():
+    runtime = _runtime()
+    runtime["device"] = None
+    with pytest.raises(ValueError, match="explicit nonempty string"):
+        validate_runtime_config(runtime)
+
+
+def test_freeze_manifest_rejects_underpowered_plan(tmp_path):
+    _manifest, _manifest_path = _make_frozen_fixture(tmp_path)
+    with pytest.raises(ValueError, match="underpowered"):
+        build_manifest(
+            git_commit="0123456789abcdef",
+            model_id="Qwen/Qwen2.5-3B-Instruct",
+            model_revision="immutable-revision",
+            number_of_pairs=6,
+            planning_p10=0.225,
+            planning_p01=0.075,
+            alpha_one_sided=0.05,
+            target_power=0.90,
+            preregistration=Path("prereg.txt"),
+            scenario_set=Path("scenarios.json"),
+            runtime_config=Path("runtime.json"),
+            evaluator=Path("evaluator.txt"),
+            adapter=Path("adapter.txt"),
+            runner=Path("runner.txt"),
+            analysis=Path("analysis.txt"),
+            power_helper=Path("power.txt"),
+            generator_runtime=Path("generator.txt"),
+            schedule_implementation=Path("schedule.txt"),
+            freeze_validator=Path("validator.txt"),
+            repo_root=tmp_path,
+        )
+
+
+def test_confirmatory_rejects_generation_limit_shorter_than_legal_outputs(tmp_path):
+    path = tmp_path / "scenarios.json"
+    path.write_text(json.dumps(_scenario_payload()), encoding="utf-8")
+    scenarios = confirmatory.load_confirmatory_scenarios(path)
+    runtime = _runtime()
+    runtime["decoding"]["max_new_tokens"] = 5
+    with pytest.raises(ValueError, match="cannot represent every legal output"):
+        confirmatory._validate_generation_capacity(runtime, scenarios)
+
+
+def test_confirmatory_requires_resolved_model_revision():
+    class FakeModel:
+        def parameters(self):
+            return iter([type("P", (), {"device": "cpu"})()])
+
+    adapter = type(
+        "A",
+        (),
+        {
+            "resolved_revision": None,
+            "generator": type(
+                "G",
+                (),
+                {"device": "cpu", "model": FakeModel()},
+            )(),
+        },
+    )()
+    with pytest.raises(ValueError, match="could not be resolved"):
+        confirmatory._validate_loaded_model_identity_and_device(
+            adapter,
+            model_revision="immutable-revision",
+            device="cpu",
+        )
+
+
+def test_confirmatory_verifies_loaded_device():
+    class FakeModel:
+        def parameters(self):
+            return iter([type("P", (), {"device": "cpu"})()])
+
+    adapter = type(
+        "A",
+        (),
+        {
+            "resolved_revision": "immutable-revision",
+            "generator": type(
+                "G",
+                (),
+                {"device": "cuda", "model": FakeModel()},
+            )(),
+        },
+    )()
+    with pytest.raises(ValueError, match="generator device"):
+        confirmatory._validate_loaded_model_identity_and_device(
+            adapter,
+            model_revision="immutable-revision",
+            device="cpu",
+        )
