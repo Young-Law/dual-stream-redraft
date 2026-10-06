@@ -83,7 +83,14 @@ def _make_frozen_fixture(tmp_path: Path, monkeypatch) -> tuple[dict, Path]:
     monkeypatch.setattr(
         freeze_manifest,
         "_resolve_git_commit",
-        lambda _repo_root=Path("."): frozen_git_commit,
+        lambda _ref, _repo_root=Path("."): frozen_git_commit,
+    )
+    monkeypatch.setattr(
+        freeze_manifest,
+        "_sha256_at_commit",
+        lambda _repo_root, _commit, relative_path: freeze_manifest._sha256(
+            tmp_path / relative_path
+        ),
     )
 
     (tmp_path / "scenarios.json").write_text(
