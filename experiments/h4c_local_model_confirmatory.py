@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import platform
@@ -41,7 +42,21 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _protected_key_from_env() -> bytes:
+def _protected_key_commitment(key: bytes, audit_key_id: int) -> str:
+    payload = (
+        b"H4C-PROTECTED-KEY-COMMITMENT-v1\0"
+        + str(audit_key_id).encode("ascii")
+        + b"\0"
+        + key
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _protected_key_from_env(
+    *,
+    audit_key_id: int,
+    expected_commitment: str,
+) -> bytes:
     value = os.environ.get("H4C_PROTECTED_KEY_HEX", "").strip()
     if not value:
         raise ValueError("H4C_PROTECTED_KEY_HEX must be set")
@@ -49,10 +64,13 @@ def _protected_key_from_env() -> bytes:
         key = bytes.fromhex(value)
     except ValueError as exc:
         raise ValueError("H4C_PROTECTED_KEY_HEX must be hexadecimal") from exc
-    if len(key) < 16:
-        raise ValueError("H4C_PROTECTED_KEY_HEX must decode to at least 16 bytes")
+    if len(key) < 32:
+        raise ValueError("H4C_PROTECTED_KEY_HEX must decode to at least 32 bytes")
     if key == PUBLIC_SCHEDULE_KEY:
         raise ValueError("protected and public schedule keys must differ")
+    observed = _protected_key_commitment(key, audit_key_id)
+    if not hmac.compare_digest(observed, expected_commitment.lower()):
+        raise ValueError("protected key does not match frozen key commitment")
     return key
 
 
@@ -356,7 +374,10 @@ def run_confirmatory(
     if expected_pairs != manifest["number_of_confirmatory_pairs"]:
         raise ValueError("frozen pair count does not match scenarios x seeds")
 
-    protected_key = _protected_key_from_env()
+    protected_key = _protected_key_from_env(
+        audit_key_id=int(runtime["audit_key_id"]),
+        expected_commitment=str(runtime["audit_key_commitment_sha256"]),
+    )
     marker_map = {
         scenario.scenario_id: marker
         for scenario, marker, _family in scenarios
