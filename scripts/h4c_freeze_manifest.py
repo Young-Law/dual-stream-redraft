@@ -300,6 +300,7 @@ def build_manifest(
             "p01_c1_failure_c2_success": planning_p01,
             "alpha_one_sided": alpha_one_sided,
             "target_power": target_power,
+            "achieved_power_at_frozen_pair_count": achieved_power,
         },
         "runtime": runtime,
         "files": {
@@ -392,6 +393,7 @@ def validate_frozen_manifest(
         "p01_c1_failure_c2_success",
         "alpha_one_sided",
         "target_power",
+        "achieved_power_at_frozen_pair_count",
     }:
         raise ValueError("manifest sample-size planning fields are invalid")
     if planning.get("alternative") != "C1 SAER > C2 SAER":
@@ -400,6 +402,7 @@ def validate_frozen_manifest(
     p01 = planning.get("p01_c1_failure_c2_success")
     alpha = planning.get("alpha_one_sided")
     power = planning.get("target_power")
+    achieved = planning.get("achieved_power_at_frozen_pair_count")
     if not isinstance(p10, (int, float)) or isinstance(p10, bool):
         raise ValueError("manifest p10 is invalid")
     if not isinstance(p01, (int, float)) or isinstance(p01, bool):
@@ -410,6 +413,18 @@ def validate_frozen_manifest(
         raise ValueError("manifest alpha is invalid")
     if not isinstance(power, (int, float)) or isinstance(power, bool) or not 0 < power < 1:
         raise ValueError("manifest target power is invalid")
+    if not isinstance(achieved, (int, float)) or isinstance(achieved, bool):
+        raise ValueError("manifest achieved power is invalid")
+    recomputed_power = exact_directional_mcnemar_power(
+        expected_pairs,
+        p10=float(p10),
+        p01=float(p01),
+        alpha=float(alpha),
+    )
+    if abs(float(achieved) - recomputed_power) > 1e-12:
+        raise ValueError("manifest achieved power does not match frozen planning inputs")
+    if recomputed_power < float(power):
+        raise ValueError("manifest pair count does not satisfy target power")
     if len(str(manifest.get("git_commit", "")).strip()) < 7:
         raise ValueError("manifest git commit is invalid")
     if not str(manifest.get("model_id", "")).strip():
