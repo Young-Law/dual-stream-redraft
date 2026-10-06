@@ -273,6 +273,15 @@ def build_manifest(
             "number_of_pairs must equal confirmatory scenarios x frozen seeds"
         )
 
+    achieved_power = exact_directional_mcnemar_power(
+        number_of_pairs,
+        p10=planning_p10,
+        p01=planning_p01,
+        alpha=alpha_one_sided,
+    )
+    if achieved_power < target_power:
+        raise ValueError("frozen pair count is underpowered for declared target")
+
     return {
         "schema_version": MANIFEST_SCHEMA,
         "status": "frozen-before-confirmatory-data",
