@@ -330,7 +330,7 @@ def _run_one(
         response,
         audit_schedule=schedule,
     )
-    return {
+    record = {
         "spec": asdict(spec),
         "public_replay_context_digest": request.public_replay_context_digest,
         "schedule_digest": _digest_schedule(schedule),
@@ -353,6 +353,15 @@ def _run_one(
         },
         "result": result.to_dict(),
     }
+    if spec.condition in {"C0", "C2"}:
+        record.pop("schedule_digest", None)
+        protected_response = record["response"]
+        protected_response.pop("text", None)
+        protected_response.pop("generated_token_ids", None)
+        protected_response.pop("monitored_event_indices", None)
+        protected_result = record["result"]
+        protected_result.pop("audit_exposed", None)
+    return record
 
 
 def run_confirmatory(
