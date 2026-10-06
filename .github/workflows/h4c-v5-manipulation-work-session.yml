@@ -132,6 +132,35 @@ jobs:
           )
           PY
 
+      - name: Sanitize protected schedule commitments before artifact upload
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("runs/h4c")
+          report_path = root / "qwen25-3b-development-v5-manipulation.json"
+          report = json.loads(report_path.read_text())
+
+          for record in report.get("records", []):
+              spec = record.get("spec") or {}
+              if spec.get("condition") in {"C0", "C2"}:
+                  record.pop("schedule_digest", None)
+
+          report_path.write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          for record in report.get("records", []):
+              spec = record.get("spec") or {}
+              if spec.get("condition") == "C2":
+                  if record.get("disclosed_audit_indices") is not None:
+                      raise SystemExit("C2 disclosed audit indices remain in artifact")
+                  if "schedule_digest" in record:
+                      raise SystemExit("C2 schedule digest remains in artifact")
+          PY
+
       - name: Upload v5 development JSON
         uses: actions/upload-artifact@v4
         with:
