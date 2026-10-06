@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 from experiments.h4c_power import exact_directional_mcnemar_power
@@ -15,6 +16,18 @@ from experiments.h4c_power import exact_directional_mcnemar_power
 MANIFEST_SCHEMA = "h4c-design-freeze-v3"
 RUNTIME_SCHEMA = "h4c-confirmatory-runtime-v1"
 SCENARIO_SCHEMA = "h4c-model-confirmatory-v1"
+
+_CANONICAL_FILE_PATHS = {
+    "preregistration": Path("docs/h4c_model_in_loop_preregistration.md"),
+    "evaluator": Path("experiments/h4c_model_in_loop.py"),
+    "adapter": Path("experiments/h4c_local_hf_adapter.py"),
+    "runner": Path("experiments/h4c_local_model_confirmatory.py"),
+    "analysis": Path("experiments/h4c_paired_analysis.py"),
+    "power_helper": Path("experiments/h4c_power.py"),
+    "generator_runtime": Path("dualstream/generator.py"),
+    "schedule_implementation": Path("dualstream/compact_evidence.py"),
+    "freeze_validator": Path("scripts/h4c_freeze_manifest.py"),
+}
 
 _REQUIRED_FILE_ROLES = {
     "preregistration",
@@ -40,6 +53,23 @@ _FORBIDDEN_RUNTIME_KEYS = {
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _resolve_git_commit(repo_root: Path = Path(".")) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("unable to resolve checked-out repository commit") from exc
+    commit = completed.stdout.strip().lower()
+    if len(commit) != 40 or any(ch not in "0123456789abcdef" for ch in commit):
+        raise ValueError("checked-out repository commit is not a full SHA-1")
+    return commit
 
 
 def _load_json_object(path: Path, *, label: str) -> dict:
@@ -73,6 +103,7 @@ def validate_runtime_config(data: dict) -> dict:
         "seeds",
         "audit_rate_ppm",
         "audit_key_id",
+        "key_commitment",
         "policy_version",
         "benchmark_id",
         "profile_id",
@@ -105,6 +136,12 @@ def validate_runtime_config(data: dict) -> dict:
     key_id = data.get("audit_key_id")
     if type(key_id) is not int or key_id < 0:
         raise ValueError("runtime audit_key_id must be a nonnegative integer")
+    key_commitment = str(data.get("key_commitment", "")).lower()
+    if (
+        len(key_commitment) != 64
+        or any(ch not in "0123456789abcdef" for ch in key_commitment)
+    ):
+        raise ValueError("runtime key_commitment must be a 64-character SHA-256 hex digest")
 
     for field in ("policy_version", "benchmark_id", "profile_id"):
         if not str(data.get(field, "")).strip():
@@ -207,6 +244,15 @@ def _scenario_count(path: Path) -> int:
     return len(rows)
 
 
+def _validate_canonical_execution_paths(file_paths: dict[str, Path]) -> None:
+    for role, expected_path in _CANONICAL_FILE_PATHS.items():
+        actual_path = file_paths.get(role)
+        if actual_path != expected_path:
+            raise ValueError(
+                f"{role} must use canonical path {expected_path.as_posix()}"
+            )
+
+
 def build_manifest(
     *,
     git_commit: str,
@@ -230,8 +276,9 @@ def build_manifest(
     freeze_validator: Path,
     repo_root: Path = Path("."),
 ) -> dict:
-    if len(git_commit.strip()) < 7:
-        raise ValueError("git_commit must identify the frozen repository revision")
+    resolved_git_commit = _resolve_git_commit(Path("."))
+    if git_commit.strip().lower() != resolved_git_commit:
+        raise ValueError("git_commit does not match checked-out repository HEAD")
     if not model_id.strip() or not model_revision.strip():
         raise ValueError("model_id and model_revision must be nonempty")
     if number_of_pairs < 1:
@@ -258,6 +305,7 @@ def build_manifest(
         "schedule_implementation": schedule_implementation,
         "freeze_validator": freeze_validator,
     }
+    _validate_canonical_execution_paths(file_paths)
     resolved = {
         name: _resolve_repo_file(repo_root, path, label=name)
         for name, path in file_paths.items()
@@ -285,7 +333,7 @@ def build_manifest(
     return {
         "schema_version": MANIFEST_SCHEMA,
         "status": "frozen-before-confirmatory-data",
-        "git_commit": git_commit.strip(),
+        "git_commit": resolved_git_commit,
         "model_id": model_id.strip(),
         "model_revision": model_revision.strip(),
         "treatment_version": runtime["treatment_version"],
@@ -360,6 +408,11 @@ def validate_frozen_manifest(
         if not isinstance(path_value, str) or not isinstance(expected, str):
             raise ValueError(f"manifest file entry is incomplete: {role}")
         path = Path(path_value)
+        expected_path = _CANONICAL_FILE_PATHS.get(role)
+        if expected_path is not None and path != expected_path:
+            raise ValueError(
+                f"manifest {role} path is not the canonical execution path"
+            )
         resolved = _resolve_repo_file(repo_root, path, label=role)
         actual = _sha256(resolved)
         if actual != expected:
@@ -425,8 +478,9 @@ def validate_frozen_manifest(
         raise ValueError("manifest achieved power does not match frozen planning inputs")
     if recomputed_power < float(power):
         raise ValueError("manifest pair count does not satisfy target power")
-    if len(str(manifest.get("git_commit", "")).strip()) < 7:
-        raise ValueError("manifest git commit is invalid")
+    manifest_git_commit = str(manifest.get("git_commit", "")).strip().lower()
+    if manifest_git_commit != _resolve_git_commit(Path(".")):
+        raise ValueError("manifest git commit does not match checked-out repository HEAD")
     if not str(manifest.get("model_id", "")).strip():
         raise ValueError("manifest model_id is invalid")
     if not str(manifest.get("model_revision", "")).strip():
