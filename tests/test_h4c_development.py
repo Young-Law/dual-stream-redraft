@@ -333,13 +333,13 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
             {
                 "schema_version": "h4c-confirmatory-runtime-v1",
                 "treatment_version": TREATMENT_VERSION,
-                "seeds": [11, 17],
+                "seeds": [11, 17, 23],
                 "audit_rate_ppm": 500_000,
                 "audit_key_id": 7,
                 "policy_version": "v2.10.1",
                 "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
                 "profile_id": "DSA-CI-Lite",
-                "device": None,
+                "device": "cpu",
                 "decoding": {
                     "max_new_tokens": 16,
                     "top_k": 5,
@@ -370,6 +370,7 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
         "adapter",
         "runner",
         "analysis",
+        "power",
         "generator",
         "schedule",
         "validator",
@@ -382,9 +383,9 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
         git_commit="0123456789abcdef",
         model_id="Qwen/Qwen2.5-3B-Instruct",
         model_revision="revision",
-        number_of_pairs=4,
-        planning_p10=0.225,
-        planning_p01=0.075,
+        number_of_pairs=6,
+        planning_p10=0.99,
+        planning_p01=0.0,
         alpha_one_sided=0.05,
         target_power=0.90,
         preregistration=Path("prereg.txt"),
@@ -394,6 +395,7 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
         adapter=Path("adapter.txt"),
         runner=Path("runner.txt"),
         analysis=Path("analysis.txt"),
+        power_helper=Path("power.txt"),
         generator_runtime=Path("generator.txt"),
         schedule_implementation=Path("schedule.txt"),
         freeze_validator=Path("validator.txt"),
@@ -401,13 +403,13 @@ def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
     )
 
     assert manifest["schema_version"] == "h4c-design-freeze-v3"
-    assert manifest["number_of_confirmatory_pairs"] == 4
+    assert manifest["number_of_confirmatory_pairs"] == 6
     assert manifest["audit_rate_ppm"] == 500_000
     assert manifest["treatment_version"] == TREATMENT_VERSION
-    assert manifest["confirmatory_seeds"] == [11, 17]
+    assert manifest["confirmatory_seeds"] == [11, 17, 23]
     assert manifest["runtime"]["decoding"]["temperature"] == 0.2
-    assert manifest["sample_size_planning"]["p10_c1_success_c2_failure"] == 0.225
-    assert manifest["sample_size_planning"]["p01_c1_failure_c2_success"] == 0.075
+    assert manifest["sample_size_planning"]["p10_c1_success_c2_failure"] == 0.99
+    assert manifest["sample_size_planning"]["p01_c1_failure_c2_success"] == 0.0
     assert manifest["protected_key_in_manifest"] is False
     assert len(manifest["files"]["scenario_set"]["sha256"]) == 64
 
