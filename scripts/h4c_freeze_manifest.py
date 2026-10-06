@@ -58,7 +58,7 @@ def _sha256(path: Path) -> str:
 def _resolve_git_commit(ref: str, repo_root: Path = Path(".")) -> str:
     try:
         completed = subprocess.run(
-            ["git", "rev-parse", "--verify", f"{ref}^{commit}"],
+            ["git", "rev-parse", "--verify", f"{ref}^{{commit}}"],
             cwd=repo_root,
             check=True,
             capture_output=True,
