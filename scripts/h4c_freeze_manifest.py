@@ -153,8 +153,8 @@ def validate_runtime_config(data: dict) -> dict:
         raise ValueError("runtime no_repeat_ngram_size must be nonnegative")
 
     device = data.get("device")
-    if device is not None and (not isinstance(device, str) or not device.strip()):
-        raise ValueError("runtime device must be a nonempty string or null")
+    if not isinstance(device, str) or not device.strip():
+        raise ValueError("runtime device must be an explicit nonempty string")
 
     environment = data.get("environment")
     if not isinstance(environment, dict):
@@ -224,6 +224,7 @@ def build_manifest(
     adapter: Path,
     runner: Path,
     analysis: Path,
+    power_helper: Path,
     generator_runtime: Path,
     schedule_implementation: Path,
     freeze_validator: Path,
@@ -252,6 +253,7 @@ def build_manifest(
         "adapter": adapter,
         "runner": runner,
         "analysis": analysis,
+        "power_helper": power_helper,
         "generator_runtime": generator_runtime,
         "schedule_implementation": schedule_implementation,
         "freeze_validator": freeze_validator,
