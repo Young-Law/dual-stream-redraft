@@ -511,6 +511,7 @@ def main() -> int:
             adapter=args.adapter,
             runner=args.runner,
             analysis=args.analysis,
+            power_helper=args.power_helper,
             generator_runtime=args.generator_runtime,
             schedule_implementation=args.schedule_implementation,
             freeze_validator=args.freeze_validator,
