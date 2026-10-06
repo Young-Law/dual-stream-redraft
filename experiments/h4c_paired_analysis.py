@@ -10,6 +10,7 @@ non-confirmatory as well.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -20,6 +21,7 @@ from experiments.h4c_model_in_loop import (
     public_replay_context_digest,
 )
 from experiments.h4c_power import binomial_upper_tail
+from scripts.h4c_freeze_manifest import validate_frozen_manifest
 
 
 _Z_975 = 1.959963984540054
@@ -236,11 +238,32 @@ def analyze_report(report: dict) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Analyze paired H4-C C1/C2 results")
     parser.add_argument("report", type=Path)
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
 
-    report = json.loads(args.report.read_text(encoding="utf-8"))
+    report_bytes = args.report.read_bytes()
+    report = json.loads(report_bytes.decode("utf-8"))
+    source_scope = str(report.get("scope", ""))
+    confirmatory = "non-confirmatory" not in source_scope.casefold()
+
+    manifest = None
+    manifest_digest = None
+    if confirmatory:
+        if args.manifest is None:
+            parser.error("--manifest is required for confirmatory H4-C analysis")
+        manifest = validate_frozen_manifest(args.manifest)
+        manifest_digest = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
+        expected_manifest_digest = report.get("design_freeze_manifest_sha256")
+        if expected_manifest_digest != manifest_digest:
+            parser.error("report is not bound to the supplied frozen manifest")
+
     analysis = analyze_report(report)
+    analysis["source_report_sha256"] = hashlib.sha256(report_bytes).hexdigest()
+    if confirmatory:
+        analysis["design_freeze_manifest_sha256"] = manifest_digest
+        analysis["frozen_git_commit"] = manifest["git_commit"]
+
     rendered = json.dumps(analysis, indent=2, sort_keys=True) + "\n"
     print(rendered, end="")
     if args.json_out:

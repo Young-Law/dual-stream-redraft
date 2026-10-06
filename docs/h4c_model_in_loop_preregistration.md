@@ -318,7 +318,63 @@ The eventual H4-C artifact must include:
 
 A smoke phase may establish that the harness, parser, evaluator, and audit reconstruction work. Smoke data are not confirmatory evidence.
 
-Do not publish an H4-C effect estimate as confirmatory until the preregistration, confirmatory scenario set, prompt templates, evaluator, analysis code, model revision, and sample-size decision are frozen in a versioned manifest created before confirmatory data collection.
+Do not publish an H4-C effect estimate as confirmatory until the preregistration,
+confirmatory scenario set, prompt templates, evaluator, model adapter, generation runtime,
+audit-schedule implementation, analysis code, model revision, exact decoding configuration,
+seed list, audit rate, runtime environment, and sample-size decision are frozen in a versioned
+manifest created before confirmatory data collection.
+
+### Confirmatory freeze guardrails
+
+The repository contains a dormant confirmatory execution scaffold in
+`experiments/h4c_local_model_confirmatory.py`. Its presence does **not** mean that the
+confirmatory design is frozen or that confirmatory collection may begin. The runner refuses to
+execute unless it receives an `h4c-design-freeze-v3` manifest whose file hashes and runtime
+configuration validate against the working tree.
+
+The v3 freeze manifest binds:
+- the preregistration and held-out confirmatory scenario set;
+- a separate `h4c-confirmatory-runtime-v1` configuration containing the treatment version,
+  audit rate, audit-key identifier, a SHA-256 commitment binding the out-of-band protected
+  key to that identifier, fixed seeds, trial-contract identifiers, decoding settings, device
+  declaration, Python version, platform, and exact Torch/Transformers/tokenizers package
+  versions;
+- the evaluator/request builder, local-model adapter, dedicated confirmatory runner, and
+  paired-analysis implementation;
+- the underlying generator implementation and keyed schedule-selection implementation;
+- the freeze validator itself;
+- the immutable model identifier/revision; and
+- the precommitted directional McNemar planning assumptions and resulting pair count.
+
+The validator recomputes every bound file hash, requires behavior-critical execution roles to
+use their canonical imported module paths, verifies the declared repository commit against the
+actual checkout, and requires the pair count to equal the number of frozen scenarios multiplied
+by the number of frozen seeds while meeting the frozen exact-power target. The confirmatory
+runner also checks the installed treatment version, exact declared runtime environment, loaded
+model revision/device, legal-output generation capacity, and the out-of-band protected key
+against the frozen key commitment before collection. Protected audit-key material itself is
+forbidden from both the runtime configuration and manifest.
+
+Only after the treatment-comprehension gate is GO and the remaining design decisions are
+committed should the manifest be generated. The eventual execution form is:
+
+```bash
+export H4C_PROTECTED_KEY_HEX="<protected-key-supplied-out-of-band>"
+python -m experiments.h4c_local_model_confirmatory \
+  --manifest experiments/h4c_design_freeze.json \
+  --allow-network \
+  --json-out runs/h4c/confirmatory.json
+
+python -m experiments.h4c_paired_analysis \
+  runs/h4c/confirmatory.json \
+  --manifest experiments/h4c_design_freeze.json \
+  --json-out runs/h4c/confirmatory-analysis.json
+```
+
+The confirmatory analysis entry point revalidates the same frozen manifest and binds its
+output to SHA-256 digests of both the source report and manifest. No confirmatory output may
+be used to alter the frozen prompts, scenarios, runtime, evaluator, audit rate, sample size,
+or directional analysis.
 
 ## Claim boundary
 
@@ -336,11 +392,12 @@ Even a positive H4-C result would establish only that protected keyed auditing r
    recording all prior development NO-GO iterations.
 8. Choose the confirmatory audit rate and sample size from documented pre-freeze planning
    assumptions.
-9. Freeze prompts, confirmatory scenarios, evaluator, runner, analysis, model revision,
-   audit rate, and sample size.
-10. Generate and commit a versioned design-freeze manifest containing hashes of those inputs.
-11. Run the confirmatory experiment without further tuning and archive the raw/result
-    artifacts.
+9. Finalize the held-out confirmatory scenarios and runtime configuration, including exact
+   seeds, decoding parameters, device/environment declaration, and immutable model revision.
+10. Generate and commit the v3 design-freeze manifest, binding the complete execution and
+    analysis dependency set before confirmatory data exist.
+11. Validate the manifest in a clean environment, then run the dedicated confirmatory runner
+    without tuning and archive the raw/result artifacts plus paired analysis.
 
 
 ## Non-confirmatory local-model smoke
@@ -404,6 +461,7 @@ when a nonzero process exit is desired for automation. A development rerun after
 or evaluator behavior is still development data and must never be relabeled as confirmatory.
 
 Once the go/no-go checks pass and the confirmatory design is final, use
-`scripts/h4c_freeze_manifest.py` to bind the git revision, model revision, pair count, and
-SHA-256 hashes of the frozen preregistration, scenario set, evaluator, runner, and analysis
-implementation. The protected key must never be placed in that manifest.
+`scripts/h4c_freeze_manifest.py` to create the v3 freeze manifest described above. The
+manifest must be generated before confirmatory collection and validated by the dedicated
+confirmatory runner. The protected key must never be placed in the runtime configuration,
+manifest, repository, model-visible prompt, or public workflow log.

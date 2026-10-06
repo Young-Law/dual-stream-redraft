@@ -14,6 +14,7 @@ from experiments.h4c_local_model_development import (
 from experiments.h4c_manipulation_check import evaluate_manipulation_check
 from experiments.h4c_model_in_loop import TREATMENT_VERSION, TrialSpec, public_replay_context_digest
 from experiments.h4c_paired_analysis import analyze_report
+from scripts import h4c_freeze_manifest as freeze_manifest
 from experiments.h4c_power import (
     _binomial_pmf,
     exact_directional_mcnemar_power,
@@ -312,37 +313,118 @@ def test_exact_power_handles_full_default_search_scale():
     assert 0.0 < power < 1.0
 
 
-def test_freeze_manifest_hashes_frozen_inputs(tmp_path):
-    files = {}
-    for name in ("prereg", "scenarios", "evaluator", "runner", "analysis"):
-        path = tmp_path / f"{name}.txt"
-        path.write_text(f"{name}\n", encoding="utf-8")
-        files[name] = path
+def test_freeze_manifest_hashes_frozen_inputs(tmp_path, monkeypatch):
+    scenario_path = tmp_path / "scenarios.json"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "h4c-model-confirmatory-v1",
+                "scope": "Frozen confirmatory H4-C scenario set.",
+                "scenarios": [
+                    {"scenario_id": "confirmatory-001"},
+                    {"scenario_id": "confirmatory-002"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "h4c-confirmatory-runtime-v1",
+                "treatment_version": TREATMENT_VERSION,
+                "seeds": [11, 17, 23],
+                "audit_rate_ppm": 500_000,
+                "audit_key_id": 7,
+                "key_commitment": "a" * 64,
+                "policy_version": "v2.10.1",
+                "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
+                "profile_id": "DSA-CI-Lite",
+                "device": "cpu",
+                "decoding": {
+                    "max_new_tokens": 16,
+                    "top_k": 5,
+                    "temperature": 0.2,
+                    "top_p": 0.95,
+                    "do_sample": True,
+                    "repetition_penalty": 1.0,
+                    "no_repeat_ngram_size": 0,
+                },
+                "environment": {
+                    "python_version": "3.11.16",
+                    "platform_system": "Linux",
+                    "platform_machine": "x86_64",
+                    "packages": {
+                        "torch": "2.0.0",
+                        "transformers": "5.0.0",
+                        "tokenizers": "0.22.0",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    frozen_git_commit = "0" * 40
+    monkeypatch.setattr(
+        freeze_manifest,
+        "_resolve_git_commit",
+        lambda _ref, _repo_root=Path("."): frozen_git_commit,
+    )
+    monkeypatch.setattr(
+        freeze_manifest,
+        "_sha256_at_commit",
+        lambda _repo_root, _commit, relative_path: freeze_manifest._sha256(
+            tmp_path / relative_path
+        ),
+    )
+    canonical_files = (
+        Path("docs/h4c_model_in_loop_preregistration.md"),
+        Path("experiments/h4c_model_in_loop.py"),
+        Path("experiments/h4c_local_hf_adapter.py"),
+        Path("experiments/h4c_local_model_confirmatory.py"),
+        Path("experiments/h4c_paired_analysis.py"),
+        Path("experiments/h4c_power.py"),
+        Path("dualstream/generator.py"),
+        Path("dualstream/compact_evidence.py"),
+        Path("scripts/h4c_freeze_manifest.py"),
+    )
+    for relative_path in canonical_files:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative_path.as_posix() + "\n", encoding="utf-8")
 
     manifest = build_manifest(
-        git_commit="0123456789abcdef",
-        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        git_commit=frozen_git_commit,
+        model_id="Qwen/Qwen2.5-3B-Instruct",
         model_revision="revision",
-        treatment_version=TREATMENT_VERSION,
-        audit_rate_ppm=500_000,
-        number_of_pairs=128,
-        planning_p10=0.225,
-        planning_p01=0.075,
+        number_of_pairs=6,
+        planning_p10=0.99,
+        planning_p01=0.0,
         alpha_one_sided=0.05,
         target_power=0.90,
-        preregistration=files["prereg"],
-        scenario_set=files["scenarios"],
-        evaluator=files["evaluator"],
-        runner=files["runner"],
-        analysis=files["analysis"],
+        preregistration=Path("docs/h4c_model_in_loop_preregistration.md"),
+        scenario_set=Path("scenarios.json"),
+        runtime_config=Path("runtime.json"),
+        evaluator=Path("experiments/h4c_model_in_loop.py"),
+        adapter=Path("experiments/h4c_local_hf_adapter.py"),
+        runner=Path("experiments/h4c_local_model_confirmatory.py"),
+        analysis=Path("experiments/h4c_paired_analysis.py"),
+        power_helper=Path("experiments/h4c_power.py"),
+        generator_runtime=Path("dualstream/generator.py"),
+        schedule_implementation=Path("dualstream/compact_evidence.py"),
+        freeze_validator=Path("scripts/h4c_freeze_manifest.py"),
+        repo_root=tmp_path,
     )
 
-    assert manifest["schema_version"] == "h4c-design-freeze-v2"
-    assert manifest["number_of_confirmatory_pairs"] == 128
+    assert manifest["schema_version"] == "h4c-design-freeze-v3"
+    assert manifest["number_of_confirmatory_pairs"] == 6
     assert manifest["audit_rate_ppm"] == 500_000
     assert manifest["treatment_version"] == TREATMENT_VERSION
-    assert manifest["sample_size_planning"]["p10_c1_success_c2_failure"] == 0.225
-    assert manifest["sample_size_planning"]["p01_c1_failure_c2_success"] == 0.075
+    assert manifest["confirmatory_seeds"] == [11, 17, 23]
+    assert manifest["runtime"]["decoding"]["temperature"] == 0.2
+    assert manifest["sample_size_planning"]["p10_c1_success_c2_failure"] == 0.99
+    assert manifest["sample_size_planning"]["p01_c1_failure_c2_success"] == 0.0
     assert manifest["protected_key_in_manifest"] is False
     assert len(manifest["files"]["scenario_set"]["sha256"]) == 64
 
