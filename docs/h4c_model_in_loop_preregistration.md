@@ -335,9 +335,10 @@ configuration validate against the working tree.
 The v3 freeze manifest binds:
 - the preregistration and held-out confirmatory scenario set;
 - a separate `h4c-confirmatory-runtime-v1` configuration containing the treatment version,
-  audit rate, audit-key identifier, fixed seeds, trial-contract identifiers, decoding settings,
-  device declaration, Python version, platform, and exact Torch/Transformers/tokenizers
-  package versions;
+  audit rate, audit-key identifier, a SHA-256 commitment binding the out-of-band protected
+  key to that identifier, fixed seeds, trial-contract identifiers, decoding settings, device
+  declaration, Python version, platform, and exact Torch/Transformers/tokenizers package
+  versions;
 - the evaluator/request builder, local-model adapter, dedicated confirmatory runner, and
   paired-analysis implementation;
 - the underlying generator implementation and keyed schedule-selection implementation;
@@ -345,11 +346,14 @@ The v3 freeze manifest binds:
 - the immutable model identifier/revision; and
 - the precommitted directional McNemar planning assumptions and resulting pair count.
 
-The validator recomputes every bound file hash and requires the pair count to equal the number
-of frozen scenarios multiplied by the number of frozen seeds. The confirmatory runner also
-checks the installed treatment version and exact declared runtime environment before loading
-the model. Protected audit-key material is forbidden from both the runtime configuration and
-manifest.
+The validator recomputes every bound file hash, requires behavior-critical execution roles to
+use their canonical imported module paths, verifies the declared repository commit against the
+actual checkout, and requires the pair count to equal the number of frozen scenarios multiplied
+by the number of frozen seeds while meeting the frozen exact-power target. The confirmatory
+runner also checks the installed treatment version, exact declared runtime environment, loaded
+model revision/device, legal-output generation capacity, and the out-of-band protected key
+against the frozen key commitment before collection. Protected audit-key material itself is
+forbidden from both the runtime configuration and manifest.
 
 Only after the treatment-comprehension gate is GO and the remaining design decisions are
 committed should the manifest be generated. The eventual execution form is:
@@ -363,11 +367,14 @@ python -m experiments.h4c_local_model_confirmatory \
 
 python -m experiments.h4c_paired_analysis \
   runs/h4c/confirmatory.json \
+  --manifest experiments/h4c_design_freeze.json \
   --json-out runs/h4c/confirmatory-analysis.json
 ```
 
-No confirmatory output may be used to alter the frozen prompts, scenarios, runtime,
-evaluator, audit rate, sample size, or directional analysis.
+The confirmatory analysis entry point revalidates the same frozen manifest and binds its
+output to SHA-256 digests of both the source report and manifest. No confirmatory output may
+be used to alter the frozen prompts, scenarios, runtime, evaluator, audit rate, sample size,
+or directional analysis.
 
 ## Claim boundary
 
