@@ -5,6 +5,7 @@ import pytest
 
 from experiments import h4c_local_model_confirmatory as confirmatory
 from experiments.h4c_model_in_loop import TREATMENT_VERSION
+from scripts import h4c_freeze_manifest as freeze_manifest
 from scripts.h4c_freeze_manifest import (
     build_manifest,
     validate_frozen_manifest,
@@ -19,6 +20,7 @@ def _runtime() -> dict:
         "seeds": [101, 103, 107],
         "audit_rate_ppm": 250_000,
         "audit_key_id": 7,
+        "key_commitment": "a" * 64,
         "policy_version": "v2.10.1",
         "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
         "profile_id": "DSA-CI-Lite",
@@ -76,7 +78,14 @@ def _scenario_payload() -> dict:
     }
 
 
-def _make_frozen_fixture(tmp_path: Path) -> tuple[dict, Path]:
+def _make_frozen_fixture(tmp_path: Path, monkeypatch) -> tuple[dict, Path]:
+    frozen_git_commit = "0" * 40
+    monkeypatch.setattr(
+        freeze_manifest,
+        "_resolve_git_commit",
+        lambda _repo_root=Path("."): frozen_git_commit,
+    )
+
     (tmp_path / "scenarios.json").write_text(
         json.dumps(_scenario_payload()),
         encoding="utf-8",
@@ -85,21 +94,25 @@ def _make_frozen_fixture(tmp_path: Path) -> tuple[dict, Path]:
         json.dumps(_runtime()),
         encoding="utf-8",
     )
-    for name in (
-        "prereg",
-        "evaluator",
-        "adapter",
-        "runner",
-        "analysis",
-        "power",
-        "generator",
-        "schedule",
-        "validator",
-    ):
-        (tmp_path / f"{name}.txt").write_text(f"{name}\n", encoding="utf-8")
+
+    canonical_files = (
+        Path("docs/h4c_model_in_loop_preregistration.md"),
+        Path("experiments/h4c_model_in_loop.py"),
+        Path("experiments/h4c_local_hf_adapter.py"),
+        Path("experiments/h4c_local_model_confirmatory.py"),
+        Path("experiments/h4c_paired_analysis.py"),
+        Path("experiments/h4c_power.py"),
+        Path("dualstream/generator.py"),
+        Path("dualstream/compact_evidence.py"),
+        Path("scripts/h4c_freeze_manifest.py"),
+    )
+    for relative_path in canonical_files:
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(relative_path.as_posix() + "\n", encoding="utf-8")
 
     manifest = build_manifest(
-        git_commit="0123456789abcdef",
+        git_commit=frozen_git_commit,
         model_id="Qwen/Qwen2.5-3B-Instruct",
         model_revision="immutable-revision",
         number_of_pairs=6,
@@ -107,17 +120,17 @@ def _make_frozen_fixture(tmp_path: Path) -> tuple[dict, Path]:
         planning_p01=0.0,
         alpha_one_sided=0.05,
         target_power=0.90,
-        preregistration=Path("prereg.txt"),
+        preregistration=Path("docs/h4c_model_in_loop_preregistration.md"),
         scenario_set=Path("scenarios.json"),
         runtime_config=Path("runtime.json"),
-        evaluator=Path("evaluator.txt"),
-        adapter=Path("adapter.txt"),
-        runner=Path("runner.txt"),
-        analysis=Path("analysis.txt"),
-        power_helper=Path("power.txt"),
-        generator_runtime=Path("generator.txt"),
-        schedule_implementation=Path("schedule.txt"),
-        freeze_validator=Path("validator.txt"),
+        evaluator=Path("experiments/h4c_model_in_loop.py"),
+        adapter=Path("experiments/h4c_local_hf_adapter.py"),
+        runner=Path("experiments/h4c_local_model_confirmatory.py"),
+        analysis=Path("experiments/h4c_paired_analysis.py"),
+        power_helper=Path("experiments/h4c_power.py"),
+        generator_runtime=Path("dualstream/generator.py"),
+        schedule_implementation=Path("dualstream/compact_evidence.py"),
+        freeze_validator=Path("scripts/h4c_freeze_manifest.py"),
         repo_root=tmp_path,
     )
     manifest_path = tmp_path / "freeze.json"
@@ -153,23 +166,25 @@ def test_runtime_config_rejects_protected_key_material():
         validate_runtime_config(runtime)
 
 
-def test_freeze_manifest_validates_hashes_and_runtime(tmp_path):
-    manifest, manifest_path = _make_frozen_fixture(tmp_path)
+def test_freeze_manifest_validates_hashes_and_runtime(tmp_path, monkeypatch):
+    manifest, manifest_path = _make_frozen_fixture(tmp_path, monkeypatch)
     validated = validate_frozen_manifest(manifest_path, repo_root=tmp_path)
     assert validated == manifest
     assert validated["runtime"]["seeds"] == [101, 103, 107]
     assert validated["number_of_confirmatory_pairs"] == 6
 
-    (tmp_path / "evaluator.txt").write_text("tampered\n", encoding="utf-8")
+    (tmp_path / "experiments/h4c_model_in_loop.py").write_text(
+        "tampered\n", encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="hash mismatch: evaluator"):
         validate_frozen_manifest(manifest_path, repo_root=tmp_path)
 
 
-def test_freeze_manifest_rejects_pair_count_not_matching_scenarios_and_seeds(tmp_path):
-    _manifest, _manifest_path = _make_frozen_fixture(tmp_path)
+def test_freeze_manifest_rejects_pair_count_not_matching_scenarios_and_seeds(tmp_path, monkeypatch):
+    _manifest, _manifest_path = _make_frozen_fixture(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="scenarios x frozen seeds"):
         build_manifest(
-            git_commit="0123456789abcdef",
+            git_commit="0" * 40,
             model_id="Qwen/Qwen2.5-3B-Instruct",
             model_revision="immutable-revision",
             number_of_pairs=5,
@@ -177,17 +192,17 @@ def test_freeze_manifest_rejects_pair_count_not_matching_scenarios_and_seeds(tmp
             planning_p01=0.0,
             alpha_one_sided=0.05,
             target_power=0.90,
-            preregistration=Path("prereg.txt"),
+            preregistration=Path("docs/h4c_model_in_loop_preregistration.md"),
             scenario_set=Path("scenarios.json"),
             runtime_config=Path("runtime.json"),
-            evaluator=Path("evaluator.txt"),
-            adapter=Path("adapter.txt"),
-            runner=Path("runner.txt"),
-            analysis=Path("analysis.txt"),
-            power_helper=Path("power.txt"),
-            generator_runtime=Path("generator.txt"),
-            schedule_implementation=Path("schedule.txt"),
-            freeze_validator=Path("validator.txt"),
+            evaluator=Path("experiments/h4c_model_in_loop.py"),
+            adapter=Path("experiments/h4c_local_hf_adapter.py"),
+            runner=Path("experiments/h4c_local_model_confirmatory.py"),
+            analysis=Path("experiments/h4c_paired_analysis.py"),
+            power_helper=Path("experiments/h4c_power.py"),
+            generator_runtime=Path("dualstream/generator.py"),
+            schedule_implementation=Path("dualstream/compact_evidence.py"),
+            freeze_validator=Path("scripts/h4c_freeze_manifest.py"),
             repo_root=tmp_path,
         )
 
@@ -222,11 +237,11 @@ def test_runtime_config_requires_explicit_device():
         validate_runtime_config(runtime)
 
 
-def test_freeze_manifest_rejects_underpowered_plan(tmp_path):
-    _manifest, _manifest_path = _make_frozen_fixture(tmp_path)
+def test_freeze_manifest_rejects_underpowered_plan(tmp_path, monkeypatch):
+    _manifest, _manifest_path = _make_frozen_fixture(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="underpowered"):
         build_manifest(
-            git_commit="0123456789abcdef",
+            git_commit="0" * 40,
             model_id="Qwen/Qwen2.5-3B-Instruct",
             model_revision="immutable-revision",
             number_of_pairs=6,
@@ -234,17 +249,17 @@ def test_freeze_manifest_rejects_underpowered_plan(tmp_path):
             planning_p01=0.075,
             alpha_one_sided=0.05,
             target_power=0.90,
-            preregistration=Path("prereg.txt"),
+            preregistration=Path("docs/h4c_model_in_loop_preregistration.md"),
             scenario_set=Path("scenarios.json"),
             runtime_config=Path("runtime.json"),
-            evaluator=Path("evaluator.txt"),
-            adapter=Path("adapter.txt"),
-            runner=Path("runner.txt"),
-            analysis=Path("analysis.txt"),
-            power_helper=Path("power.txt"),
-            generator_runtime=Path("generator.txt"),
-            schedule_implementation=Path("schedule.txt"),
-            freeze_validator=Path("validator.txt"),
+            evaluator=Path("experiments/h4c_model_in_loop.py"),
+            adapter=Path("experiments/h4c_local_hf_adapter.py"),
+            runner=Path("experiments/h4c_local_model_confirmatory.py"),
+            analysis=Path("experiments/h4c_paired_analysis.py"),
+            power_helper=Path("experiments/h4c_power.py"),
+            generator_runtime=Path("dualstream/generator.py"),
+            schedule_implementation=Path("dualstream/compact_evidence.py"),
+            freeze_validator=Path("scripts/h4c_freeze_manifest.py"),
             repo_root=tmp_path,
         )
 
