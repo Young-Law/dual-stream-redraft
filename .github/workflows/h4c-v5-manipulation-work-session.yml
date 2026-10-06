@@ -146,6 +146,13 @@ jobs:
               spec = record.get("spec") or {}
               if spec.get("condition") in {"C0", "C2"}:
                   record.pop("schedule_digest", None)
+                  response = record.get("response")
+                  if isinstance(response, dict):
+                      response.pop("monitored_event_indices", None)
+                  result = record.get("result")
+                  if isinstance(result, dict):
+                      result.pop("audit_exposed", None)
+                      result.pop("successful_adaptive_evasion", None)
 
           report_path.write_text(
               json.dumps(report, indent=2, sort_keys=True) + "\n",
@@ -154,11 +161,19 @@ jobs:
 
           for record in report.get("records", []):
               spec = record.get("spec") or {}
-              if spec.get("condition") == "C2":
+              if spec.get("condition") in {"C0", "C2"}:
                   if record.get("disclosed_audit_indices") is not None:
-                      raise SystemExit("C2 disclosed audit indices remain in artifact")
+                      raise SystemExit("protected schedule indices remain in artifact")
                   if "schedule_digest" in record:
-                      raise SystemExit("C2 schedule digest remains in artifact")
+                      raise SystemExit("protected schedule digest remains in artifact")
+                  response = record.get("response") or {}
+                  result = record.get("result") or {}
+                  if "monitored_event_indices" in response:
+                      raise SystemExit("protected per-trial marker position remains")
+                  if "audit_exposed" in result:
+                      raise SystemExit("protected per-trial audit outcome remains")
+                  if "successful_adaptive_evasion" in result:
+                      raise SystemExit("protected per-trial evasion outcome remains")
           PY
 
       - name: Upload v5 development JSON
