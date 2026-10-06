@@ -329,3 +329,27 @@ def test_confirmatory_verifies_loaded_device():
             model_revision="immutable-revision",
             device="cpu",
         )
+
+
+def test_protected_key_must_match_frozen_commitment(monkeypatch):
+    key = b"k" * 32
+    audit_key_id = 7
+    commitment = confirmatory._protected_key_commitment(key, audit_key_id)
+    monkeypatch.setenv("H4C_PROTECTED_KEY_HEX", key.hex())
+    assert confirmatory._protected_key_from_env(
+        audit_key_id=audit_key_id,
+        expected_commitment=commitment,
+    ) == key
+
+    with pytest.raises(ValueError, match="frozen key commitment"):
+        confirmatory._protected_key_from_env(
+            audit_key_id=audit_key_id,
+            expected_commitment="0" * 64,
+        )
+
+
+def test_runtime_config_rejects_malformed_key_commitment():
+    runtime = _runtime()
+    runtime["key_commitment"] = "not-a-digest"
+    with pytest.raises(ValueError, match="key_commitment"):
+        validate_runtime_config(runtime)
