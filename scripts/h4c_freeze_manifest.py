@@ -472,6 +472,11 @@ def main() -> int:
         default=Path("experiments/h4c_paired_analysis.py"),
     )
     parser.add_argument(
+        "--power-helper",
+        type=Path,
+        default=Path("experiments/h4c_power.py"),
+    )
+    parser.add_argument(
         "--generator-runtime",
         type=Path,
         default=Path("dualstream/generator.py"),
