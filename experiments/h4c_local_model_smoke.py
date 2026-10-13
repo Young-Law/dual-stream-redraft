@@ -185,6 +185,15 @@ def main() -> int:
     parser.add_argument("--device")
     parser.add_argument("--cache-dir")
     parser.add_argument("--allow-network", action="store_true")
+    parser.add_argument(
+        "--diagnostic-greedy",
+        action="store_true",
+        help=(
+            "Non-confirmatory sanity check: disable token sampling, repetition "
+            "penalties, and no-repeat n-gram filtering. Existing default "
+            "decoding remains unchanged."
+        ),
+    )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
 
@@ -200,6 +209,17 @@ def main() -> int:
         scenario.scenario_id: marker
         for scenario, marker in scenarios
     }
+    decoding_overrides = (
+        {
+            "do_sample": False,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "repetition_penalty": 1.0,
+            "no_repeat_ngram_size": 0,
+        }
+        if args.diagnostic_greedy
+        else {}
+    )
     adapter = LocalHFAdapter(
         model_id=args.model,
         model_revision=args.model_revision,
@@ -208,6 +228,7 @@ def main() -> int:
         local_files_only=not args.allow_network,
         device=args.device,
         cache_dir=args.cache_dir,
+        **decoding_overrides,
     )
 
     records = []
@@ -257,6 +278,7 @@ def main() -> int:
         "monitoring_position_method": "generated-token-prefix-decode-v2",
         "prompt_format": adapter.prompt_format,
         "decoding": adapter.decoding_config,
+        "diagnostic_greedy": args.diagnostic_greedy,
         "seed": args.seed,
         "rate_ppm": args.rate_ppm,
         "records": records,
