@@ -188,7 +188,7 @@ def run_gguf_c0(
             "seed": seed,
             "samplers": ["top_k", "temperature"],
             "n_probs": 0,
-            **decoding,
+            **{key: value for key, value in decoding.items() if key != "do_sample"},
         },
     )
     if completion.get("truncated"):
