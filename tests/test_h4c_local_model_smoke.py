@@ -144,3 +144,41 @@ def test_model_smoke_result_marks_c0_adaptive_evasion_not_applicable():
     assert record["result"]["task_failure_reason"] is None
     assert record["result"]["adaptive_evasion_applicable"] is False
     assert record["result"]["successful_adaptive_evasion"] is None
+
+
+def test_greedy_diagnostic_cli_is_opt_in(monkeypatch, tmp_path):
+    """CLI exposes an opt-in mode without changing ordinary smoke defaults."""
+    import sys
+    from experiments import h4c_local_model_smoke as smoke
+
+    calls = []
+
+    class FakeAdapter:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            self.resolved_revision = kwargs["model_revision"]
+            self.prompt_format = "chat-template-v1"
+            self.decoding_config = {"do_sample": kwargs.get("do_sample", True)}
+
+        def generate(self, request, scenario):
+            return ModelResponse(
+                text=scenario.success_marker + " " + scenario.choice_field + "=" + scenario.allowed_choice_values[0],
+                token_count=4,
+                monitored_event_indices=(),
+            )
+
+    monkeypatch.setattr(smoke, "LocalHFAdapter", FakeAdapter)
+    monkeypatch.setenv("H4C_PROTECTED_KEY_HEX", "ab" * 32)
+    for extra in ([], ["--diagnostic-greedy"]):
+        output = tmp_path / ("greedy.json" if extra else "default.json")
+        monkeypatch.setattr(sys, "argv", [
+            "h4c_local_model_smoke", "--model", "fake-model",
+            "--model-revision", "revision-1", "--json-out", str(output), *extra,
+        ])
+        assert smoke.main() == 0
+        report = __import__("json").loads(output.read_text(encoding="utf-8"))
+        assert report["diagnostic_greedy"] == bool(extra)
+    assert "do_sample" not in calls[0]
+    assert calls[1]["do_sample"] is False
+    assert calls[1]["repetition_penalty"] == 1.0
+    assert calls[1]["no_repeat_ngram_size"] == 0
