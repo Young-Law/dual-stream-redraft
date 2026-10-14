@@ -147,7 +147,7 @@ def analyze_gguf_pairs(report: dict) -> dict:
             "same_generation_different_audit_outcome": (
                 same_generation and differing_exposure
             ),
-            "output_level_adaptation_observed": not same_generation,
+            "output_difference_observed": not same_generation,
         })
 
     return {
