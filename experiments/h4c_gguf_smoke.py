@@ -43,6 +43,7 @@ class GGUFSmokeAdapter:
         model_id: str,
         monitored_markers: dict[str, str],
         max_new_tokens: int = 48,
+        require_context_headroom: bool = False,
         request_json=_request,
     ):
         if max_new_tokens < 1:
@@ -55,6 +56,7 @@ class GGUFSmokeAdapter:
         self.model_id = model_id
         self.monitored_markers = dict(monitored_markers)
         self.max_new_tokens = max_new_tokens
+        self.require_context_headroom = require_context_headroom
         self.request_json = request_json
         self.last_generation_metadata: dict = {}
         self.decoding_config = {
@@ -77,6 +79,16 @@ class GGUFSmokeAdapter:
         props = self.request_json(self.endpoint + "/props")
         _check_server_model_path(props, self.gguf_path)
         self.server_model_path = props["model_path"]
+        self.n_ctx_slot = None
+        if require_context_headroom:
+            settings = props.get("default_generation_settings")
+            n_ctx = (
+                settings.get("n_ctx")
+                if isinstance(settings, dict) else None
+            )
+            if type(n_ctx) is not int or n_ctx <= 0:
+                raise ValueError("llama.cpp /props did not report a valid per-slot n_ctx")
+            self.n_ctx_slot = n_ctx
 
     def generate(self, request, scenario) -> ModelResponse:
         spec = request.spec
@@ -109,6 +121,28 @@ class GGUFSmokeAdapter:
             raise ValueError("llama.cpp did not provide a chat-template prompt")
 
         cap = min(self.max_new_tokens, scenario.token_capacity)
+        if self.require_context_headroom:
+            encoded = self.request_json(
+                self.endpoint + "/tokenize",
+                payload={
+                    "content": formatted,
+                    "add_special": False,
+                    "parse_special": True,
+                },
+            )
+            prompt_ids = encoded.get("tokens")
+            if not isinstance(prompt_ids, list) or any(
+                type(token_id) is not int or token_id < 0
+                for token_id in prompt_ids
+            ):
+                raise ValueError("llama.cpp returned invalid formatted prompt tokens")
+            # Reserve headroom for BOS and implementation-specific stop handling.
+            if len(prompt_ids) + cap + 8 > self.n_ctx_slot:
+                raise ValueError(
+                    "GGUF H4-C prompt exceeds context headroom "
+                    f"(prompt_tokens={len(prompt_ids)}, n_predict={cap}, "
+                    f"n_ctx={self.n_ctx_slot}). Restart llama.cpp with a larger -c."
+                )
         completion = self.request_json(
             self.endpoint + "/completion",
             payload={
