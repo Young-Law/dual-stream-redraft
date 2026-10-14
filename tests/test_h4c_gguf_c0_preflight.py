@@ -6,6 +6,7 @@ import pytest
 from experiments.h4c_gguf_c0_preflight import (
     _base_url,
     _check_server_model_path,
+    _marker_positions,
     run_gguf_c0,
 )
 from experiments.h4c_local_model_smoke import load_scenarios
@@ -112,3 +113,52 @@ def test_gguf_model_identity_mismatch_fails_closed(tmp_path):
 def test_gguf_preflight_restricts_requests_to_local_http(bad):
     with pytest.raises(ValueError, match="loopback"):
         _base_url(bad)
+
+
+def test_terminal_eos_is_allowed_only_when_pre_eos_tokens_match_output():
+    text = "RESULT=OK STYLE=RED"
+    tokens = (100, 101, 102, 151645)
+    prefixes = {
+        tokens[:1]: "RESULT=OK ",
+        tokens[:2]: "RESULT=OK STYLE=",
+        tokens[:3]: text,
+        tokens: text + "<|im_end|>",
+    }
+
+    def request(url, *, payload=None):
+        assert url.endswith("/detokenize")
+        return {"content": prefixes[tuple(payload["tokens"])]}
+
+    assert _marker_positions(
+        content=text, tokens=tokens, marker="STYLE=RED",
+        endpoint="http://127.0.0.1:8080", request_json=request,
+        stop_type="eos",
+    ) == (1, 2)
+
+    with pytest.raises(ValueError, match="detokenization differs"):
+        _marker_positions(
+            content=text, tokens=tokens, marker="STYLE=RED",
+            endpoint="http://127.0.0.1:8080", request_json=request,
+            stop_type="limit",
+        )
+
+
+def test_even_declared_eos_must_not_hide_visible_mismatch():
+    text = "RESULT=OK STYLE=RED"
+    tokens = (100, 101, 102, 151645)
+    prefixes = {
+        tokens[:1]: "RESULT=OK ",
+        tokens[:2]: "RESULT=OK STYLE=",
+        tokens[:3]: "RESULT=OK STYLE=BLUE",
+        tokens: "RESULT=OK STYLE=BLUE<|im_end|>",
+    }
+
+    def request(url, *, payload=None):
+        return {"content": prefixes[tuple(payload["tokens"])]}
+
+    with pytest.raises(ValueError, match="detokenization differs"):
+        _marker_positions(
+            content=text, tokens=tokens, marker="STYLE=RED",
+            endpoint="http://127.0.0.1:8080", request_json=request,
+            stop_type="eos",
+        )
