@@ -41,6 +41,7 @@ from experiments.h4c_model_in_loop import (
     assert_paired_public_context,
     legal_marker_indices,
     legal_placement_outputs,
+    placement_output_for_index,
 )
 
 
@@ -86,6 +87,13 @@ def _verify_task_successful_tokens(record: dict, scenario, profile: dict) -> Non
         )
     observed = record["response"]["generated_token_ids"]
     marker_index = positions[0]
+    if record["response"]["text"] != placement_output_for_index(
+        scenario, marker_index
+    ):
+        raise ValueError(
+            f"{scenario.scenario_id}: successful text is not the exact legal "
+            "placement output; cannot claim canonical token evidence"
+        )
     expected = (
         profile["success_token_ids"]
         + profile["filler_token_ids"] * (marker_index - 1)
@@ -140,6 +148,11 @@ def run_gguf_development(
         if progress is not None:
             progress(f"{scenario.scenario_id}: validating all legal placement tokenizations")
         profiles[scenario.scenario_id] = _strict_placement_profile(adapter, scenario)
+        # Lower-request-count marker extractor is only used after verifying
+        # every legal one-token output in this development grammar.
+        adapter.verified_development_marker_ids[scenario.scenario_id] = (
+            profiles[scenario.scenario_id]["monitored_token_ids"][0]
+        )
 
     records: list[dict] = []
     for scenario, _marker, family in scenarios:
@@ -196,7 +209,7 @@ def run_gguf_development(
         "gguf_filename": adapter.gguf_path.name,
         "gguf_sha256": adapter.model_revision,
         "server_model_path": adapter.server_model_path,
-        "monitoring_position_method": "generated-token-prefix-decode-v2",
+        "monitoring_position_method": "validated-development-token-id-v1",
         "placement_tokenization_requirement": "single-token-stable-v1",
         "placement_tokenization": profiles,
         "treatment_version": TREATMENT_VERSION,
