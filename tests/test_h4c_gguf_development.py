@@ -21,7 +21,7 @@ def _first():
     return load_development_scenarios(path)[0]
 
 
-def _adapter(tmp_path, *, malformed_legal=False, malformed_generated=False):
+def _adapter(tmp_path, *, malformed_legal=False, malformed_generated=False, context_size=4096):
     gguf = tmp_path / "fake.gguf"
     gguf.write_bytes(b"pinned-fake-qwen-GGUF")
     scenario, marker, family = _first()
@@ -32,9 +32,12 @@ def _adapter(tmp_path, *, malformed_legal=False, malformed_generated=False):
         if url.endswith("/health"):
             return {"status": "ok"}
         if url.endswith("/props"):
-            return {"model_path": str(gguf)}
+            return {"model_path": str(gguf), "default_generation_settings": {"n_ctx": context_size}}
         if url.endswith("/tokenize"):
             assert payload["add_special"] is False
+            if payload["parse_special"] is True:
+                assert payload["content"].startswith("<chat>")
+                return {"tokens": [300] * 80}
             assert payload["parse_special"] is False
             text = payload["content"]
             words = text.strip().split()
@@ -70,6 +73,7 @@ def _adapter(tmp_path, *, malformed_legal=False, malformed_generated=False):
         model_id="qwen-Q4-test",
         monitored_markers={scenario.scenario_id: marker},
         max_new_tokens=16,
+        require_context_headroom=True,
         request_json=request,
     )
     return adapter, ((scenario, marker, family),), prompts
@@ -175,3 +179,13 @@ def test_invalid_key_and_rate_rejected_without_generation(tmp_path):
             scenario_set_sha256="digest",
         )
     assert prompts == []
+
+
+def test_context_headroom_preflight_fails_before_inference(tmp_path):
+    adapter, scenarios, prompts = _adapter(tmp_path, context_size=80)
+    with pytest.raises(ValueError, match="context headroom"):
+        run_gguf_development(
+            adapter, scenarios=scenarios, seeds=(11,), rate_ppm=500_000,
+            protected_key=b"p" * 32, scenario_set_sha256="digest",
+        )
+    assert len(prompts) == 1
