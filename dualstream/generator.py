@@ -321,6 +321,7 @@ class DualStreamGenerator:
         stop_token_ids = self._get_stop_token_ids()
 
         generated_ids: List[int] = []
+        generation_stop_reason = "max_new_tokens"
         frames: List[MonologueFrameV1] = []
         frame_bytes: List[bytes] = []
         running_hash = RunningHash() if cfg.include_running_hash else None
@@ -464,6 +465,7 @@ class DualStreamGenerator:
                 generated_ids.append(chosen_id)
 
                 if self._should_stop_on_token(chosen_id, stop_token_ids):
+                    generation_stop_reason = "stop_token"
                     break
 
                 # Next step: feed only the chosen token (cached KV handles history),
@@ -515,6 +517,7 @@ class DualStreamGenerator:
             "frame_bytes": frame_bytes,
             "compact_evidence_bytes": compact_bytes,
             "answer_token_ids": generated_ids,
+            "generation_stop_reason": generation_stop_reason,
             "fallback_text": None if fallback is None else fallback.fallback_text,
             "running_hash": None if running_hash is None else running_hash.digest_hex(),
             "model": self.model_name,
