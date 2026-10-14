@@ -16,7 +16,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 GENESIS = "0" * 64
@@ -92,6 +92,7 @@ class ToyControlPlane:
             agent_id == self.agent_id
             and resource == "task"
             and action in ALLOWED_ACTIONS
+            and not (self._finished or self._safe_exited)
         )
         # Explicit resource denylist documents the high-risk test cases.
         if resource in DENIED_RESOURCES:
