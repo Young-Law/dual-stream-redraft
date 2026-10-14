@@ -97,6 +97,7 @@ def _marker_positions(
     marker: str,
     endpoint: str,
     request_json,
+    stop_type: str | None = None,
 ) -> tuple[int, ...]:
     spans = exact_marker_spans(content, marker)
     if not spans:
@@ -113,7 +114,23 @@ def _marker_positions(
             raise ValueError("unstable prefix decoding; cannot claim marker positions")
         prefixes.append(decoded)
     if prefixes[-1] != content:
-        raise ValueError("token detokenization differs from completion content")
+        # llama.cpp can return the terminating EOS token ID while suppressing
+        # its visible representation from /completion.content. Accept ONLY a
+        # terminal mismatch with a server-declared EOS stop, and ONLY when
+        # the full pre-EOS token prefix reproduces the completion exactly.
+        # Never discard an arbitrary suffix or re-tokenize decoded text.
+        if not (
+            stop_type == "eos"
+            and len(tokens) >= 2
+            and prefixes[-2] == content
+        ):
+            raise ValueError(
+                "token detokenization differs from completion content"
+                f" (stop_type={stop_type!r}, tokens={len(tokens)},"
+                f" detokenized_chars={len(prefixes[-1])},"
+                f" completion_chars={len(content)})"
+            )
+        prefixes[-1] = content
     indices: set[int] = set()
     for start, stop in spans:
         for index in range(len(tokens)):
@@ -207,6 +224,7 @@ def run_gguf_c0(
     positions = _marker_positions(
         content=content, tokens=tokens, marker=monitored_marker,
         endpoint=endpoint, request_json=request_json,
+        stop_type=completion.get("stop_type"),
     )
     response = ModelResponse(
         text=content, token_count=len(tokens),
