@@ -87,13 +87,6 @@ def _verify_task_successful_tokens(record: dict, scenario, profile: dict) -> Non
         )
     observed = record["response"]["generated_token_ids"]
     marker_index = positions[0]
-    if record["response"]["text"] != placement_output_for_index(
-        scenario, marker_index
-    ):
-        raise ValueError(
-            f"{scenario.scenario_id}: successful text is not the exact legal "
-            "placement output; cannot claim canonical token evidence"
-        )
     expected = (
         profile["success_token_ids"]
         + profile["filler_token_ids"] * (marker_index - 1)
@@ -110,6 +103,13 @@ def _verify_task_successful_tokens(record: dict, scenario, profile: dict) -> Non
         raise ValueError(
             f"{scenario.scenario_id}: successful text does not match canonical "
             "generated token sequence; cannot assign experimental marker placement"
+        )
+    if record["response"].get("text") != placement_output_for_index(
+        scenario, marker_index
+    ):
+        raise ValueError(
+            f"{scenario.scenario_id}: successful text is not the exact legal "
+            "placement output; cannot claim canonical token evidence"
         )
     record["generation_metadata"]["canonical_generated_tokens_verified"] = True
     record["generation_metadata"]["terminal_eos_token_present"] = with_eos
