@@ -189,3 +189,83 @@ def test_context_headroom_preflight_fails_before_inference(tmp_path):
             protected_key=b"p" * 32, scenario_set_sha256="digest",
         )
     assert len(prompts) == 1
+
+
+def test_only_c0_and_checkpoint_callback_do_not_run_c1_c2(tmp_path):
+    adapter, scenarios, prompts = _adapter(tmp_path)
+    checkpoints = []
+    notes = []
+    report = run_gguf_development(
+        adapter, scenarios=scenarios, seeds=(11,),
+        rate_ppm=500_000, protected_key=b"p" * 32,
+        scenario_set_sha256="digest",
+        conditions=("C0",),
+        progress=notes.append,
+        on_record=lambda record: checkpoints.append(record.copy()),
+    )
+    assert report["conditions_run"] == ["C0"]
+    assert len(report["records"]) == len(checkpoints) == 1
+    assert report["records"][0]["spec"]["condition"] == "C0"
+    assert report["records"][0]["result"]["task_success"] is True
+    assert len(prompts) == 1
+    assert any("condition=C0: generating" in note for note in notes)
+    assert any("condition=C0: saved" in note for note in notes)
+
+
+def test_multiple_conditions_allowed_but_duplicates_rejected(tmp_path):
+    adapter, scenarios, _ = _adapter(tmp_path)
+    with pytest.raises(ValueError, match="conditions"):
+        run_gguf_development(
+            adapter, scenarios=scenarios, seeds=(11,),
+            rate_ppm=500_000, protected_key=b"p" * 32,
+            scenario_set_sha256="digest", conditions=("C0", "C0"),
+        )
+    with pytest.raises(ValueError, match="conditions"):
+        run_gguf_development(
+            adapter, scenarios=scenarios, seeds=(11,),
+            rate_ppm=500_000, protected_key=b"p" * 32,
+            scenario_set_sha256="digest", conditions=(),
+        )
+
+
+def test_http_progress_wrapper_reports_failed_endpoint(tmp_path):
+    from experiments.h4c_gguf_smoke import GGUFSmokeAdapter
+
+    model = tmp_path / "fake.gguf"
+    model.write_bytes(b"fake")
+    messages = []
+
+    def fake_request(url, *, payload=None):
+        if url.endswith("/health"):
+            return {"status": "ok"}
+        if url.endswith("/props"):
+            return {"model_path": str(model)}
+        if url.endswith("/completion"):
+            raise TimeoutError("simulated timeout")
+        return {"prompt": "formatted"}
+
+    adapter = GGUFSmokeAdapter(
+        server_url="http://127.0.0.1:8080", gguf_path=model,
+        model_id="fake", monitored_markers={"s": "RED"},
+        progress=messages.append, request_json=fake_request,
+        http_timeout_seconds=3,
+    )
+    with pytest.raises(TimeoutError, match="simulated"):
+        adapter.request_json(
+            "http://127.0.0.1:8080/completion", payload={"n_predict": 16}
+        )
+    assert any("HTTP completion: start" in s for s in messages)
+    assert any("HTTP completion: failed" in s for s in messages)
+
+
+def test_invalid_http_timeout_rejected(tmp_path):
+    from experiments.h4c_gguf_smoke import GGUFSmokeAdapter
+
+    model = tmp_path / "fake.gguf"
+    model.write_bytes(b"fake")
+    with pytest.raises(ValueError, match="http_timeout_seconds"):
+        GGUFSmokeAdapter(
+            server_url="http://127.0.0.1:8080", gguf_path=model,
+            model_id="fake", monitored_markers={"s": "RED"},
+            http_timeout_seconds=0,
+        )
