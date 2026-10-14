@@ -64,7 +64,7 @@ def test_identical_generation_can_have_different_audit_outcomes():
     assert pair["c2_recorded_saer"] is True
     assert pair["protected_audit_miss_with_task_success"] is True
     assert pair["same_generation_different_audit_outcome"] is True
-    assert pair["output_level_adaptation_observed"] is False
+    assert pair["output_difference_observed"] is False
 
 
 def test_hidden_schedule_must_not_leak_in_c2():
