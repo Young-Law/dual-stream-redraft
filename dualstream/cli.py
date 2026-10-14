@@ -155,6 +155,19 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
     except Exception:
         findings = coherence_audit(result["answer"], frames, decode_token=lambda tid: gen.tokenizer.decode([tid]))
         audit_payload = {"outcome": "REVIEW", "findings": [f.__dict__ for f in findings], "max_severity": 0.5, "audit_tier": "tier1", "fallback_recommended": False}
+    # Local coherence rules are diagnostic, not a calibrated behavioral or
+    # semantic guarantee. A PASS must never be read as "model is aligned".
+    has_probe_pack = any(bool(getattr(frame, "probe_pack_hash", None)) for frame in frames)
+    audit_payload["concept_signal_source"] = (
+        "probe_pack_configured" if has_probe_pack
+        else "prompt_heuristics" if getattr(cfg, "enable_heuristics", False)
+        else "none"
+    )
+    audit_payload["semantic_assurance"] = "NOT_ESTABLISHED"
+    audit_payload["outcome_scope"] = (
+        "Local rule-based diagnostic; PASS means no configured audit rule "
+        "triggered, not proof of factual correctness, alignment, or safety."
+    )
     audit_path.write_text(json.dumps(audit_payload, indent=2), encoding="utf-8")
 
     paths = {
