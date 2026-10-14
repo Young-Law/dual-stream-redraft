@@ -179,3 +179,49 @@ def test_generate_normalizes_compact_top_k_to_profile_base(tmp_path, monkeypatch
     )
     assert cli.cmd_generate(args) == 0
     assert seen["top_k"] == 5
+
+
+
+@pytest.mark.parametrize("stop_reason,expected_cap", [
+    ("stop_token", False),
+    ("max_new_tokens", True),
+])
+def test_run_generation_persists_explicit_stop_reason(tmp_path, monkeypatch, stop_reason, expected_cap):
+    from dualstream.generator import GenerationConfig
+
+    class _StoppingGenerator(_FakeGenerator):
+        def generate(self, prompt, cfg):
+            result = super().generate(prompt, cfg)
+            result["generation_stop_reason"] = stop_reason
+            return result
+
+    monkeypatch.setattr(cli, "render_monologue_text", lambda *a, **kw: "evidence")
+    monkeypatch.setattr(cli, "coherence_audit", lambda *a, **kw: [])
+    cli._run_generation(
+        _StoppingGenerator(),
+        GenerationConfig(max_new_tokens=2),
+        "test",
+        tmp_path,
+    )
+    meta = json.loads((tmp_path / "meta.json").read_text(encoding="utf-8"))
+    assert meta["generation_stop_reason"] == stop_reason
+    assert meta["generation_token_cap_reached"] is expected_cap
+
+
+def test_run_generation_rejects_unknown_stop_reason(tmp_path, monkeypatch):
+    from dualstream.generator import GenerationConfig
+
+    class _InvalidStoppingGenerator(_FakeGenerator):
+        def generate(self, prompt, cfg):
+            result = super().generate(prompt, cfg)
+            result["generation_stop_reason"] = "unknown"
+            return result
+
+    monkeypatch.setattr(cli, "render_monologue_text", lambda *a, **kw: "evidence")
+    with pytest.raises(ValueError, match="unknown generation_stop_reason"):
+        cli._run_generation(
+            _InvalidStoppingGenerator(),
+            GenerationConfig(max_new_tokens=2),
+            "test",
+            tmp_path,
+        )
