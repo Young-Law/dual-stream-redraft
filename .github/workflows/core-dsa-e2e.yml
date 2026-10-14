@@ -229,6 +229,108 @@ jobs:
           )
           print(json.dumps(metrics, indent=2, sort_keys=True))
           PY
+      - name: Native model token preference vs decoder-control selection
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          for mode in baseline controlled; do
+            flags=""
+            if [ "$mode" = "controlled" ]; then
+              flags="--no-repeat-ngram-size 1"
+            fi
+            python -m dualstream.cli generate \
+              --model "$DSA_MODEL_PATH" \
+              --prompt "Continue this repeated word sequence exactly: red red red red red red red red red red red red." \
+              --outdir "runs/core-decoder-$mode" \
+              --device cpu --offline \
+              --max-new-tokens 40 --top-k 10 --greedy --seed 17 \
+              --compact-evidence --compact-wire-version 0x0303 \
+              --evidence-profile DSA-CI-Lite \
+              --audit-mode cheap --no-heuristics \
+              $flags
+            python -m dualstream.cli verify-evidence-budget \
+              --artifact "runs/core-decoder-$mode" \
+              --profile DSA-CI-Lite --ci-mode pr --json \
+              > "runs/core-decoder-$mode/verification.json"
+          done
+      - name: Reconcile real pre-control preferences and committed token IDs
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from dualstream.compact_evidence import decode_compact_sequence
+
+          outputs = {}
+          for mode in ("baseline", "controlled"):
+              folder = Path("runs/core-decoder-" + mode)
+              frames = [
+                  json.loads(line) for line in
+                  (folder / "monologue.jsonl").read_text(encoding="utf-8").splitlines()
+                  if line.strip()
+              ]
+              meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+              report = json.loads((folder / "verification.json").read_text(encoding="utf-8"))
+              decoded = decode_compact_sequence(
+                  (folder / "compact_evidence.dsae").read_bytes()
+              )
+              assert frames
+              assert report["ok"] and report["retention_state"] == "LOCAL_PASS", report
+              assert report["token_count"] == len(frames) == len(decoded["tokens"])
+              assert [f["chosen_id"] for f in frames] == [
+                  t.chosen_id for t in decoded["tokens"]
+              ]
+              assert [f["token_index"] for f in frames] == list(range(len(frames)))
+              meaningful = []
+              for frame in frames:
+                  candidates = frame["topk"]
+                  chosen = frame["chosen_id"]
+                  raw_top1 = candidates[0]
+                  if chosen == raw_top1["token_id"]:
+                      continue
+                  chosen_prob = next(
+                      (c["prob"] for c in candidates if c["token_id"] == chosen), 0.0
+                  )
+                  if raw_top1["prob"] - chosen_prob > 0.00001:
+                      meaningful.append({
+                          "index": frame["token_index"],
+                          "raw_top1_id": raw_top1["token_id"],
+                          "committed_id": chosen,
+                          "raw_top1_probability": raw_top1["prob"],
+                          "committed_raw_probability": chosen_prob,
+                      })
+              assert all("argmax_decoding" in f["decode_controls_applied"] for f in frames)
+              if mode == "controlled":
+                  assert meta["config"]["no_repeat_ngram_size"] == 1
+                  assert all("no_repeat_ngram" in f["decode_controls_applied"] for f in frames)
+              else:
+                  assert meta["config"]["no_repeat_ngram_size"] == 0
+                  assert all("no_repeat_ngram" not in f["decode_controls_applied"] for f in frames)
+                  assert not meaningful, "unexpected strong raw top1 disagreement without control"
+              outputs[mode] = {
+                  "tokens": len(frames),
+                  "strict_raw_top1_disagreements": len(meaningful),
+                  "examples": meaningful[:8],
+                  "stop_reason": meta["generation_stop_reason"],
+                  "integrity": report["retention_state"],
+              }
+          assert outputs["controlled"]["strict_raw_top1_disagreements"] > 0, (
+              "no controlled disagreement observed; cannot claim observability "
+              "without matching actual captured model evidence"
+          )
+          summary = {
+              "scope": "Real-model decoder intervention; NOT deception or semantic alignment detection.",
+              "model": "Qwen/Qwen2.5-0.5B-Instruct",
+              "decoder_control": "no_repeat_ngram_size=1",
+              "seed": 17,
+              "baseline": outputs["baseline"],
+              "controlled": outputs["controlled"],
+          }
+          Path("runs/core-decoder-controlled/observability.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
       - name: Upload real-model acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -237,5 +339,7 @@ jobs:
           path: |
             runs/core-dsa-e2e/
             runs/core-dsa-sustained/
+            runs/core-decoder-baseline/
+            runs/core-decoder-controlled/
           if-no-files-found: warn
           retention-days: 14
