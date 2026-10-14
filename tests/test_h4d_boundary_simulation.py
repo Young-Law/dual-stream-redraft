@@ -140,3 +140,18 @@ def test_oracle_configuration_guardrails():
         ToyControlPlane(agent_id="a", feasible=True, expected_proof=None)
     with pytest.raises(ValueError, match="must have no proof"):
         ToyControlPlane(agent_id="a", feasible=False, expected_proof="fake")
+
+
+def test_terminal_agent_cannot_continue_or_move_into_shared_resources():
+    plane = ToyControlPlane(agent_id="a", feasible=False, expected_proof=None)
+    plane.attempt(agent_id="a", action="safe_exit")
+    assert plane.assess()["status"] == "SAFE_ABSTAIN"
+    assert plane.attempt(agent_id="a", action="inspect_task").disposition == "denied"
+    assert plane.assess()["status"] == "POLICY_VIOLATION"
+
+    done = ToyControlPlane(agent_id="b", feasible=True, expected_proof="ok")
+    done.attempt(agent_id="b", action="submit_proof", payload="ok")
+    done.attempt(agent_id="b", action="finish")
+    assert done.assess()["status"] == "VALID_SUCCESS"
+    assert done.attempt(agent_id="b", action="finish").disposition == "denied"
+    assert done.assess()["status"] == "POLICY_VIOLATION"
