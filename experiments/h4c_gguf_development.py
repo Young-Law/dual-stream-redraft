@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from experiments.h4c_gguf_smoke import GGUFSmokeAdapter
@@ -112,10 +115,15 @@ def run_gguf_development(
     rate_ppm: int,
     protected_key: bytes,
     scenario_set_sha256: str,
+    conditions: tuple[str, ...] = ("C0", "C1", "C2"),
+    progress=None,
+    on_record=None,
 ) -> dict:
     """One adapter, one model load, and a complete C0/C1/C2 sequence per seed."""
     if not scenarios:
         raise ValueError("no H4-C development scenarios selected")
+    if not conditions or any(c not in {"C0", "C1", "C2"} for c in conditions) or len(conditions) != len(set(conditions)):
+        raise ValueError("conditions must be a unique nonempty subset of C0,C1,C2")
     if not seeds or len(seeds) != len(set(seeds)):
         raise ValueError("development seeds must be nonempty and unique")
     if not 0 <= rate_ppm <= 1_000_000:
@@ -129,6 +137,8 @@ def run_gguf_development(
             raise ValueError("duplicate H4-C development scenario")
         if adapter.monitored_markers.get(scenario.scenario_id) != marker:
             raise ValueError("GGUF adapter monitored marker differs from fixture")
+        if progress is not None:
+            progress(f"{scenario.scenario_id}: validating all legal placement tokenizations")
         profiles[scenario.scenario_id] = _strict_placement_profile(adapter, scenario)
 
     records: list[dict] = []
@@ -148,12 +158,27 @@ def run_gguf_development(
                 (c1, PUBLIC_SCHEDULE_KEY),
                 (c2, protected_key),
             ):
+                if spec.condition not in conditions:
+                    continue
+                if progress is not None:
+                    progress(
+                        f"{scenario.scenario_id} seed={seed} "
+                        f"condition={spec.condition}: generating"
+                    )
                 row = _run_one(spec, scenario, schedule_key=key, adapter=adapter)
                 row["generation_metadata"] = dict(adapter.last_generation_metadata)
                 row["scenario_family"] = family
                 row["legal_marker_indices"] = list(legal_marker_indices(scenario))
                 _verify_task_successful_tokens(row, scenario, profile)
                 records.append(row)
+                if on_record is not None:
+                    on_record(row)
+                if progress is not None:
+                    progress(
+                        f"{scenario.scenario_id} seed={seed} condition={spec.condition}: "
+                        f"saved; success={row['result']['task_success']}, "
+                        f"tokens={row['response']['token_count']}"
+                    )
 
     return {
         "benchmark_id": "H4C-MODEL-IN-LOOP-v1",
@@ -177,6 +202,7 @@ def run_gguf_development(
         "treatment_version": TREATMENT_VERSION,
         "decoding": dict(adapter.decoding_config),
         "seeds": list(seeds),
+        "conditions_run": list(conditions),
         "rate_ppm": rate_ppm,
         "records": records,
     }
@@ -200,9 +226,28 @@ def main() -> int:
     parser.add_argument("--seeds", default="11")
     parser.add_argument("--rate-ppm", type=int, default=500_000)
     parser.add_argument("--max-new-tokens", type=int, default=16)
+    parser.add_argument(
+        "--condition", choices=("all", "C0", "C1", "C2"), default="all",
+        help="run one condition to isolate slow requests; all is the full triplet",
+    )
+    parser.add_argument(
+        "--http-timeout", type=int, default=300,
+        help="per-request timeout in seconds; default 300",
+    )
+    parser.add_argument(
+        "--checkpoint-jsonl", type=Path,
+        help="append a durable JSON record after each completed trial",
+    )
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
 
+    def progress(message: str) -> None:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        print(f"[H4C {now}] {message}", file=sys.stderr, flush=True)
+
+    if args.http_timeout < 1:
+        parser.error("--http-timeout must be positive")
+    progress("starting GGUF development; checking fixtures and model identity")
     try:
         seeds = _parse_seeds(args.seeds)
         scenarios = load_development_scenarios(args.scenarios)
@@ -222,7 +267,28 @@ def main() -> int:
             },
             max_new_tokens=args.max_new_tokens,
             require_context_headroom=True,
+            http_timeout_seconds=args.http_timeout,
+            progress=progress,
         )
+        # JSONL is append-only by design. Refuse to reuse a prior path to
+        # avoid accidentally combining results from different runs/keys.
+        checkpoint = args.checkpoint_jsonl
+        if checkpoint is not None and checkpoint.exists():
+            raise ValueError(
+                "checkpoint JSONL already exists; choose a fresh filename"
+            )
+        if checkpoint is not None:
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+
+        def on_record(row: dict) -> None:
+            if checkpoint is None:
+                return
+            with checkpoint.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(row, sort_keys=True) + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+
+        progress("server ready; beginning tokenizer and trial checks")
         report = run_gguf_development(
             adapter,
             scenarios=scenarios,
@@ -230,10 +296,17 @@ def main() -> int:
             rate_ppm=args.rate_ppm,
             protected_key=protected_key,
             scenario_set_sha256=_sha256_file(args.scenarios),
+            conditions=(
+                ("C0", "C1", "C2")
+                if args.condition == "all" else (args.condition,)
+            ),
+            progress=progress,
+            on_record=on_record,
         )
     except (ValueError, OSError, FileNotFoundError) as exc:
         parser.error(str(exc))
 
+    progress("all selected trials complete; writing final JSON report")
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     print(rendered, end="")
     if args.json_out:
