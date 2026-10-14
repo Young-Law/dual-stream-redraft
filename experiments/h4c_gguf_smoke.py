@@ -62,6 +62,7 @@ class GGUFSmokeAdapter:
         self.monitored_markers = dict(monitored_markers)
         self.max_new_tokens = max_new_tokens
         self.require_context_headroom = require_context_headroom
+        self.progress = progress
         def timed_request(url, *, payload=None):
             operation = url.rsplit("/", 1)[-1]
             if progress is not None:
@@ -168,6 +169,11 @@ class GGUFSmokeAdapter:
             ):
                 raise ValueError("llama.cpp returned invalid formatted prompt tokens")
             # Reserve headroom for BOS and implementation-specific stop handling.
+            if self.progress is not None:
+                self.progress(
+                    f"prompt budget: {len(prompt_ids)} tokens + {cap} generated "
+                    f"+ 8 reserve <= {self.n_ctx_slot} context tokens"
+                )
             if len(prompt_ids) + cap + 8 > self.n_ctx_slot:
                 raise ValueError(
                     "GGUF H4-C prompt exceeds context headroom "
