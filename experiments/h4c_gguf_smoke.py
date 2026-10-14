@@ -143,6 +143,7 @@ class GGUFSmokeAdapter:
         positions = _marker_positions(
             content=answer_text, tokens=ids, marker=marker,
             endpoint=self.endpoint, request_json=self.request_json,
+            stop_type=completion.get("stop_type"),
         )
         self.last_generation_metadata = {
             "raw_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
