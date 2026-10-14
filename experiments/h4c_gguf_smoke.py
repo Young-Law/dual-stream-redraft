@@ -30,6 +30,7 @@ from experiments.h4c_local_model_smoke import (
 from experiments.h4c_model_in_loop import (
     ModelResponse,
     assert_paired_public_context,
+    exact_marker_spans,
 )
 
 
@@ -91,6 +92,9 @@ class GGUFSmokeAdapter:
 
         self.request_json = timed_request
         self.last_generation_metadata: dict = {}
+        # Development-only fast path: populated only after complete legal-output
+        # GGUF tokenization preflight. Normal smoke semantics remain unchanged.
+        self.verified_development_marker_ids: dict[str, int] = {}
         self.decoding_config = {
             "do_sample": False,
             "temperature": 0.0,
@@ -211,11 +215,36 @@ class GGUFSmokeAdapter:
         if len(ids) > cap:
             raise ValueError("llama.cpp generated more tokens than max_new_tokens")
 
-        positions = _marker_positions(
-            content=answer_text, tokens=ids, marker=marker,
-            endpoint=self.endpoint, request_json=self.request_json,
-            stop_type=completion.get("stop_type"),
-        )
+        marker_id = self.verified_development_marker_ids.get(scenario.scenario_id)
+        if marker_id is None:
+            positions = _marker_positions(
+                content=answer_text, tokens=ids, marker=marker,
+                endpoint=self.endpoint, request_json=self.request_json,
+                stop_type=completion.get("stop_type"),
+            )
+            position_method = "generated-token-prefix-decode-v2"
+        else:
+            # This ID is known to represent the whole monitored marker when
+            # preceded by the delimiter in every legal development output.
+            # Use raw generated IDs rather than making O(n) prefix requests.
+            positions = tuple(i for i, token_id in enumerate(ids) if token_id == marker_id)
+            visible_markers = exact_marker_spans(answer_text, marker)
+            if len(positions) != len(visible_markers):
+                raise ValueError(
+                    "GGUF development marker ID count differs from visible marker count"
+                )
+            # Full detokenization parity is checked with at most two calls.
+            # The final token can be a server-reported EOS omitted from text.
+            probe_tokens = ids[:-1] if completion.get("stop_type") == "eos" else ids
+            reconstructed = self.request_json(
+                self.endpoint + "/detokenize",
+                payload={"tokens": list(probe_tokens)},
+            ).get("content")
+            if reconstructed != answer_text:
+                raise ValueError(
+                    "GGUF development tokens do not reconstruct completion content"
+                )
+            position_method = "validated-development-token-id-v1"
         self.last_generation_metadata = {
             "raw_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "rendered_prompt_sha256": hashlib.sha256(
@@ -224,6 +253,7 @@ class GGUFSmokeAdapter:
             "stop_type": completion.get("stop_type"),
             "n_predict": cap,
             "generated_token_count": len(ids),
+            "monitoring_position_method": position_method,
         }
         return ModelResponse(
             text=answer_text,
