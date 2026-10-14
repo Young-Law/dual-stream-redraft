@@ -23,6 +23,7 @@ def test_gguf_paired_smoke_keeps_C1_C2_context_and_protected_key_private(tmp_pat
         (100,): "RESULT=OK ",
         (100, 101): "RESULT=OK STYLE=",
         (100, 101, 102): "RESULT=OK STYLE=RED",
+        (100, 101, 102, 151645): "RESULT=OK STYLE=RED<|im_end|>",
     }
 
     def fake_request(url, *, payload=None):
@@ -42,7 +43,7 @@ def test_gguf_paired_smoke_keeps_C1_C2_context_and_protected_key_private(tmp_pat
             if "The monitored evidence event" in payload["prompt"]:
                 return {
                     "content": "RESULT=OK STYLE=RED",
-                    "tokens": [100, 101, 102],
+                    "tokens": [100, 101, 102, 151645],
                     "stop_type": "eos",
                 }
             return {
@@ -76,7 +77,7 @@ def test_gguf_paired_smoke_keeps_C1_C2_context_and_protected_key_private(tmp_pat
     assert c0["result"]["task_success"] is True
     assert c1["result"]["task_success"] is True
     assert c2["result"]["task_success"] is True
-    assert c1["response"]["generated_token_ids"] == [100, 101, 102]
+    assert c1["response"]["generated_token_ids"] == [100, 101, 102, 151645]
     assert c1["response"]["monitored_event_indices"] == [1, 2]
     assert c0["response"]["monitored_event_indices"] == []
     assert c1["public_replay_context_digest"] == c2["public_replay_context_digest"]
