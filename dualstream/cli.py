@@ -126,6 +126,12 @@ def _run_generation(gen: Any, cfg: Any, prompt: str, outdir: Path) -> dict[str, 
             "compact_wire_version": getattr(cfg, "compact_wire_version", 0x0303),
         },
     }
+    stop_reason = result.get("generation_stop_reason")
+    if stop_reason is not None:
+        if stop_reason not in {"stop_token", "max_new_tokens"}:
+            raise ValueError("generator returned an unknown generation_stop_reason")
+        meta["generation_stop_reason"] = stop_reason
+        meta["generation_token_cap_reached"] = stop_reason == "max_new_tokens"
     if compact_bytes is not None:
         compact_path.write_bytes(compact_bytes)
         meta["compact_evidence_path"] = compact_path.name
