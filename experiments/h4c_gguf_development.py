@@ -221,6 +221,7 @@ def main() -> int:
                 for scenario, marker, _family in scenarios
             },
             max_new_tokens=args.max_new_tokens,
+            require_context_headroom=True,
         )
         report = run_gguf_development(
             adapter,
