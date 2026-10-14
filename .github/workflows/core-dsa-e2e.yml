@@ -331,6 +331,41 @@ jobs:
           )
           print(json.dumps(summary, indent=2, sort_keys=True))
           PY
+      - name: Prepare 48 independently scored arithmetic claims
+        run: |
+          python -m experiments.core_signal_pilot prepare \
+            --outdir runs/core-signal-pilot
+      - name: Actual model-in-the-loop DSA arithmetic calibration pilot
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          python -m dualstream.cli generate \
+            --model "$DSA_MODEL_PATH" \
+            --prompt-file runs/core-signal-pilot/prompts.txt \
+            --outdir runs/core-signal-pilot \
+            --device cpu --offline \
+            --max-new-tokens 10 --top-k 3 --greedy --seed 11 \
+            --compact-evidence --compact-wire-version 0x0303 \
+            --evidence-profile DSA-CI-Lite \
+            --audit-mode cheap --no-heuristics
+      - name: Verify each real trial and analyze independent ground truth
+        run: |
+          python -m experiments.core_signal_pilot analyze \
+            --outdir runs/core-signal-pilot \
+            > runs/core-signal-pilot/pilot-ci-report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("runs/core-signal-pilot/pilot-summary.json")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          assert report["generated_trials"] == 48
+          assert report["independently_verified_trials"] == 48
+          assert report["status"] == "EXPLORATORY_OBSERVATIONAL_PILOT"
+          assert report["no_probe_pack_enabled"]
+          assert report["not_preregistered_confirmatory"]
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
       - name: Upload real-model acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -341,5 +376,6 @@ jobs:
             runs/core-dsa-sustained/
             runs/core-decoder-baseline/
             runs/core-decoder-controlled/
+            runs/core-signal-pilot/
           if-no-files-found: warn
           retention-days: 14
