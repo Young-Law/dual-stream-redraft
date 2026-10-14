@@ -1,0 +1,155 @@
+name: Core DSA real-model acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/core-dsa-e2e.yml"
+      - "dualstream/generator.py"
+      - "dualstream/cli.py"
+      - "dualstream/frame.py"
+      - "dualstream/compact_evidence.py"
+      - "dualstream/verifier.py"
+
+permissions:
+  contents: read
+
+jobs:
+  real-model-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pinned CPU inference dependencies
+        run: |
+          python -m pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e . "transformers==4.49.0" "huggingface_hub>=0.26,<1"
+      - name: Fetch pinned public instruction model
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import snapshot_download
+          path = snapshot_download(
+              repo_id="Qwen/Qwen2.5-0.5B-Instruct",
+              revision="a338b55dd21219a5f4da42bc11a9313d1a27d4cc",
+              allow_patterns=[
+                  "*.json", "*.safetensors", "vocab.json", "merges.txt"
+              ],
+          )
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
+              out.write(f"DSA_MODEL_PATH={path}\n")
+          print("Pinned local model snapshot:", path)
+          PY
+      - name: Actual DSA inference and native evidence capture
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          python -m dualstream.cli generate \
+            --model "$DSA_MODEL_PATH" \
+            --prompt "Reply with one short friendly greeting." \
+            --outdir runs/core-dsa-e2e \
+            --device cpu --offline \
+            --max-new-tokens 12 --top-k 10 --greedy --seed 11 \
+            --compact-evidence --compact-wire-version 0x0303 \
+            --evidence-profile DSA-CI-Lite \
+            --audit-mode cheap --no-heuristics
+      - name: Independent-process evidence verification
+        run: |
+          python -m dualstream.cli verify-evidence-budget \
+            --artifact runs/core-dsa-e2e \
+            --profile DSA-CI-Lite --ci-mode pr --json \
+            > runs/core-dsa-e2e/verification.json
+      - name: Check generated token, frame and compact evidence agreement
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from dualstream.compact_evidence import decode_compact_sequence
+          out = Path("runs/core-dsa-e2e")
+          meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+          result = json.loads((out / "verification.json").read_text(encoding="utf-8"))
+          frames = [json.loads(line) for line in (out / "monologue.jsonl").read_text(encoding="utf-8").splitlines() if line]
+          decoded = decode_compact_sequence((out / "compact_evidence.dsae").read_bytes())
+          frame_ids = [frame["chosen_id"] for frame in frames]
+          compact_ids = [token.chosen_id for token in decoded["tokens"]]
+          assert frame_ids and frame_ids == compact_ids, "token/frame/compact chosen IDs differ"
+          assert len(frames) == meta["frame_token_count"] == meta["answer_token_count"], "frame count does not match metadata"
+          assert len(frames) == result["token_count"], "independent verifier token count mismatch"
+          assert all(frame.get("capture_stage") == "post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling" for frame in frames), "wrong evidence capture stage"
+          assert result["ok"] and result["verification_outcome"] == "pass", result
+          assert result["retention_state"] == "LOCAL_PASS"
+          assert (out / "answer.txt").read_text(encoding="utf-8").strip(), "model emitted no visible answer"
+          print(f"PASS: real model; {len(frames)} aligned generated tokens and authenticated compact evidence")
+          PY
+      - name: Corrupt copied evidence and require verifier rejection
+        run: |
+          mkdir -p runs/core-dsa-tampered
+          cp runs/core-dsa-e2e/compact_evidence.dsae runs/core-dsa-tampered/
+          python - <<'PY'
+          from pathlib import Path
+          target = Path("runs/core-dsa-tampered/compact_evidence.dsae")
+          data = bytearray(target.read_bytes())
+          assert len(data) > 64, "unexpectedly short evidence"
+          data[-1] ^= 0x01
+          target.write_bytes(data)
+          PY
+          set +e
+          python -m dualstream.cli verify-evidence-budget \
+            --artifact runs/core-dsa-tampered \
+            --profile DSA-CI-Lite --ci-mode pr --json \
+            > runs/core-dsa-e2e/tamper-verification.json
+          status=$?
+          set -e
+          test "$status" -eq 2
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("runs/core-dsa-e2e/tamper-verification.json").read_text())
+          assert report["ok"] is False
+          assert report["retention_state"] == "NOT_VERIFIED"
+          print("PASS: modified evidence rejected")
+          PY
+      - name: Reject dishonest artifact hash metadata
+        run: |
+          mkdir -p runs/core-dsa-metadata-tampered
+          cp runs/core-dsa-e2e/compact_evidence.dsae runs/core-dsa-metadata-tampered/
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          out = Path("runs/core-dsa-metadata-tampered")
+          metadata = json.loads(Path("runs/core-dsa-e2e/meta.json").read_text())
+          metadata["compact_evidence_sha256"] = "00" * 32
+          (out / "meta.json").write_text(json.dumps(metadata), encoding="utf-8")
+          PY
+          set +e
+          python -m dualstream.cli verify-evidence-budget \
+            --artifact runs/core-dsa-metadata-tampered \
+            --profile DSA-CI-Lite --ci-mode pr --json \
+            > runs/core-dsa-e2e/metadata-tamper-verification.json
+          status=$?
+          set -e
+          test "$status" -eq 2
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path("runs/core-dsa-e2e/metadata-tamper-verification.json").read_text())
+          assert not report["ok"]
+          print("PASS: dishonest compact evidence metadata rejected")
+          PY
+      - name: Upload real-model acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-dsa-real-model-evidence
+          path: runs/core-dsa-e2e/
+          if-no-files-found: warn
+          retention-days: 14
