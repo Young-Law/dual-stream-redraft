@@ -225,3 +225,24 @@ def test_run_generation_rejects_unknown_stop_reason(tmp_path, monkeypatch):
             "test",
             tmp_path,
         )
+
+
+
+@pytest.mark.parametrize("enable_heuristics, expected_source", [
+    (False, "none"),
+    (True, "prompt_heuristics"),
+])
+def test_local_audit_pass_does_not_claim_semantic_assurance(
+    tmp_path, monkeypatch, enable_heuristics, expected_source
+):
+    from dualstream.generator import GenerationConfig
+
+    monkeypatch.setattr(cli, "render_monologue_text", lambda *a, **kw: "evidence")
+    monkeypatch.setattr(cli, "coherence_audit", lambda *a, **kw: [])
+    cfg = GenerationConfig(max_new_tokens=2, enable_heuristics=enable_heuristics)
+    cli._run_generation(_FakeGenerator(), cfg, "hello", tmp_path)
+
+    audit = json.loads((tmp_path / "audit.json").read_text(encoding="utf-8"))
+    assert audit["concept_signal_source"] == expected_source
+    assert audit["semantic_assurance"] == "NOT_ESTABLISHED"
+    assert "not proof" in audit["outcome_scope"]
