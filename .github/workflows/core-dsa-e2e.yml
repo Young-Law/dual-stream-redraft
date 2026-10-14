@@ -91,6 +91,9 @@ jobs:
           assert all(frame.get("capture_stage") == "post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling" for frame in frames), "wrong evidence capture stage"
           assert result["ok"] and result["verification_outcome"] == "pass", result
           assert result["retention_state"] == "LOCAL_PASS"
+          audit = json.loads((out / "audit.json").read_text(encoding="utf-8"))
+          assert audit["concept_signal_source"] == "none"
+          assert audit["semantic_assurance"] == "NOT_ESTABLISHED"
           assert (out / "answer.txt").read_text(encoding="utf-8").strip(), "model emitted no visible answer"
           print(f"PASS: real model; {len(frames)} aligned generated tokens and authenticated compact evidence")
           PY
@@ -202,6 +205,9 @@ jobs:
               assert count == 96
           assert verifier["ok"] and verifier["verification_outcome"] == "pass", verifier
           assert verifier["retention_state"] == "LOCAL_PASS"
+          audit = json.loads((out / "audit.json").read_text(encoding="utf-8"))
+          assert audit["concept_signal_source"] == "none"
+          assert audit["semantic_assurance"] == "NOT_ESTABLISHED"
           assert (out / "answer.txt").read_text(encoding="utf-8").strip()
           actual_bpt = len(artifact) / count
           assert abs(actual_bpt - verifier["raw_bytes_per_token"]) < 1e-9
