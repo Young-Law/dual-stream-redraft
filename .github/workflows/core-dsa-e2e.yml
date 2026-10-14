@@ -145,11 +145,81 @@ jobs:
           assert not report["ok"]
           print("PASS: dishonest compact evidence metadata rejected")
           PY
+      - name: Sustained native DSA generation (up to 96 tokens)
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          python -m dualstream.cli generate \
+            --model "$DSA_MODEL_PATH" \
+            --prompt "Give ten numbered, practical, one-sentence tips for organizing a small home workshop. Avoid an introduction." \
+            --outdir runs/core-dsa-sustained \
+            --device cpu --offline \
+            --max-new-tokens 96 --top-k 3 --greedy --seed 11 \
+            --compact-evidence --compact-wire-version 0x0303 \
+            --evidence-profile DSA-CI-Lite \
+            --audit-mode cheap --no-heuristics
+      - name: Verify longer generated stream and record measured storage
+        run: |
+          python -m dualstream.cli verify-evidence-budget \
+            --artifact runs/core-dsa-sustained \
+            --profile DSA-CI-Lite --ci-mode pr --json \
+            > runs/core-dsa-sustained/verification.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from dualstream.compact_evidence import decode_compact_sequence
+
+          out = Path("runs/core-dsa-sustained")
+          meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+          verifier = json.loads((out / "verification.json").read_text(encoding="utf-8"))
+          frames = [
+              json.loads(line)
+              for line in (out / "monologue.jsonl").read_text(encoding="utf-8").splitlines()
+              if line.strip()
+          ]
+          artifact = (out / "compact_evidence.dsae").read_bytes()
+          decoded = decode_compact_sequence(artifact)
+          count = len(frames)
+          assert 24 <= count <= 96, f"model stopped too early or exceeded cap: {count}"
+          assert [frame["token_index"] for frame in frames] == list(range(count))
+          assert [frame["chosen_id"] for frame in frames] == [
+              record.chosen_id for record in decoded["tokens"]
+          ], "generated token IDs do not match compact evidence"
+          assert all(frame["capture_stage"] ==
+              "post_model_logits_pre_temperature_pre_penalty_pre_mask_pre_sampling"
+              for frame in frames)
+          assert count == verifier["token_count"] == meta["frame_token_count"] == meta["answer_token_count"]
+          assert verifier["ok"] and verifier["verification_outcome"] == "pass", verifier
+          assert verifier["retention_state"] == "LOCAL_PASS"
+          assert (out / "answer.txt").read_text(encoding="utf-8").strip()
+          actual_bpt = len(artifact) / count
+          assert abs(actual_bpt - verifier["raw_bytes_per_token"]) < 1e-9
+          metrics = {
+              "scope": "Real-model DSA sustained-run measurement; not a 10000-token profile budget qualification.",
+              "model": "Qwen/Qwen2.5-0.5B-Instruct",
+              "max_new_tokens": 96,
+              "generated_tokens": count,
+              "frame_count": count,
+              "compact_bytes": len(artifact),
+              "observed_bytes_per_token": actual_bpt,
+              "verification_outcome": verifier["verification_outcome"],
+              "budget_status": verifier["budget_status"],
+              "capture_stage_verified": True,
+              "frame_compact_token_ids_equal": True,
+          }
+          (out / "core-metrics.json").write_text(
+              json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          print(json.dumps(metrics, indent=2, sort_keys=True))
+          PY
       - name: Upload real-model acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: core-dsa-real-model-evidence
-          path: runs/core-dsa-e2e/
+          path: |
+            runs/core-dsa-e2e/
+            runs/core-dsa-sustained/
           if-no-files-found: warn
           retention-days: 14
