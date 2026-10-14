@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import time
 from pathlib import Path
 
 from experiments.h4c_gguf_c0_preflight import (
@@ -44,12 +45,16 @@ class GGUFSmokeAdapter:
         monitored_markers: dict[str, str],
         max_new_tokens: int = 48,
         require_context_headroom: bool = False,
+        http_timeout_seconds: int = 300,
+        progress=None,
         request_json=_request,
     ):
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
         if not model_id:
             raise ValueError("model_id must be nonempty")
+        if http_timeout_seconds < 1:
+            raise ValueError("http_timeout_seconds must be positive")
         self.endpoint = _base_url(server_url)
         self.gguf_path = gguf_path.resolve(strict=True)
         self.model_revision = _hash_model_file(self.gguf_path)
@@ -57,7 +62,33 @@ class GGUFSmokeAdapter:
         self.monitored_markers = dict(monitored_markers)
         self.max_new_tokens = max_new_tokens
         self.require_context_headroom = require_context_headroom
-        self.request_json = request_json
+        def timed_request(url, *, payload=None):
+            operation = url.rsplit("/", 1)[-1]
+            if progress is not None:
+                progress(f"HTTP {operation}: start")
+            start = time.monotonic()
+            try:
+                if request_json is _request:
+                    reply = request_json(
+                        url, payload=payload, timeout=http_timeout_seconds
+                    )
+                else:
+                    reply = request_json(url, payload=payload)
+            except Exception as exc:
+                if progress is not None:
+                    progress(
+                        f"HTTP {operation}: failed after "
+                        f"{time.monotonic() - start:.1f}s ({type(exc).__name__}: {exc})"
+                    )
+                raise
+            if progress is not None:
+                progress(
+                    f"HTTP {operation}: completed in "
+                    f"{time.monotonic() - start:.1f}s"
+                )
+            return reply
+
+        self.request_json = timed_request
         self.last_generation_metadata: dict = {}
         self.decoding_config = {
             "do_sample": False,
