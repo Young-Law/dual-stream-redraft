@@ -1,0 +1,83 @@
+name: DSA held-out measurement
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/empirical-raw-logits.yml'
+      - 'experiments/grounded_raw_logits.py'
+permissions:
+  contents: read
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: '2'
+  CMAKE_ARGS: '-DGGML_CUDA=OFF -DGGML_BLAS=OFF'
+  OMP_NUM_THREADS: '4'
+  OPENBLAS_NUM_THREADS: '1'
+jobs:
+  competence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned public research dependencies
+        run: python -m pip install numpy==1.26.4 scipy==1.14.1 scikit-learn==1.6.1 huggingface_hub==0.34.4 jinja2==3.1.6 llama-cpp-python==0.3.16
+      - name: Screen source-grounded task and verify native generation parity
+        run: python -u -m experiments.grounded_raw_logits --phase screen --outdir runs/grounded-screen
+      - name: Preserve screening and raw evidence even if gate fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grounded-screen
+          path: runs/grounded-screen/
+          retention-days: 30
+          compression-level: 1
+          if-no-files-found: warn
+  study:
+    needs: competence
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['0', '1', '2', '3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install identical pinned research dependencies
+        run: python -m pip install numpy==1.26.4 scipy==1.14.1 scikit-learn==1.6.1 huggingface_hub==0.34.4 jinja2==3.1.6 llama-cpp-python==0.3.16
+      - name: Capture assigned records under both conditions
+        run: python -u -m experiments.grounded_raw_logits --phase '${{ matrix.shard }}' --outdir 'runs/grounded-${{ matrix.shard }}'
+      - name: Preserve raw and compact study data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grounded-${{ matrix.shard }}
+          path: runs/grounded-${{ matrix.shard }}/
+          retention-days: 30
+          compression-level: 1
+          if-no-files-found: warn
+  analysis:
+    needs: [competence, study]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install numpy==1.26.4 scipy==1.14.1 scikit-learn==1.6.1
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grounded-*
+          path: collected
+      - name: Fit only on calibration and evaluate held-out predictions
+        run: python -u -m experiments.grounded_raw_logits --phase analyze --indir collected --outdir runs/grounded-analysis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grounded-analysis
+          path: runs/grounded-analysis/
+          retention-days: 30
